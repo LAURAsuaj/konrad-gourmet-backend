@@ -1,7 +1,8 @@
 /**
  * Adaptadores de servicios externos (Ministerio de Comercio, correo y redes sociales),
- * cliente HTTP seguro, plantillas de notificación (Factory Method) y el simulador
- * scripts/mockServicios.js. No usan la base de datos.
+ * cliente HTTP seguro, envío de correo contra un servidor SMTP real (STARTTLS, autenticación y
+ * adjuntos), plantillas de notificación (Factory Method) y el simulador scripts/mockServicios.js.
+ * No usan la base de datos.
  */
 import './_soporte/entorno.js';
 import { describe, it, before, after } from 'node:test';
@@ -10,7 +11,10 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
 import nodemailer from 'nodemailer';
+import { SMTPServer } from 'smtp-server';
+import { simpleParser } from 'mailparser';
 import { puertoLibre, esperar } from './_soporte/utiles.js';
 import { MinisterioComercioAdapter } from '../src/infrastructure/adapters/MinisterioComercioAdapter.js';
 import { RedesSocialesAdapter } from '../src/infrastructure/adapters/RedesSocialesAdapter.js';
@@ -116,6 +120,103 @@ describe('Correo (SMTP)', () => {
 
   it('sin SMTP_HOST falla con CONFIGURACION', async () => {
     await assert.rejects(new CorreoAdapter({ config: { host: '' } }).enviarCorreo({ para: 'a@b.co', asunto: 'x', texto: 'y' }), (e) => e.codigo === 'CONFIGURACION');
+  });
+});
+
+describe('Correo por SMTP real (STARTTLS, autenticación y adjuntos)', () => {
+  const llave = fs.readFileSync(path.join(raiz, 'tests', '_soporte', 'certificado-prueba.key'));
+  const certificado = fs.readFileSync(path.join(raiz, 'tests', '_soporte', 'certificado-prueba.crt'));
+  const pdf = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(2000, 7)]);
+  let verificacionAnterior;
+
+  // El certificado de prueba es autofirmado: solo en este grupo se desactiva su verificación
+  before(() => { verificacionAnterior = process.env.NODE_TLS_REJECT_UNAUTHORIZED; process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; });
+  after(() => {
+    if (verificacionAnterior === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    else process.env.NODE_TLS_REJECT_UNAUTHORIZED = verificacionAnterior;
+  });
+
+  async function servidorSmtp(opciones = {}) {
+    const estado = { recibidos: [], tls: null, intentosAuth: 0 };
+    const servidor = new SMTPServer({
+      key: llave, cert: certificado, allowInsecureAuth: false, ...opciones,
+      onAuth(auth, session, devolver) {
+        estado.intentosAuth += 1;
+        if (auth.username === 'usuario' && auth.password === 'clave') devolver(null, { user: 1 });
+        else devolver(new Error('Credenciales SMTP inválidas'));
+      },
+      onSecure(socket, session, devolver) { estado.tls = socket.getProtocol(); devolver(); },
+      onData(flujo, session, devolver) { simpleParser(flujo).then((mensaje) => { estado.recibidos.push({ mensaje, seguro: session.secure }); devolver(); }); },
+    });
+    servidor.on('error', () => {}); // avisa cada handshake TLS rechazado: aquí es lo esperado
+    await new Promise((resolver) => servidor.listen(0, '127.0.0.1', resolver));
+    return { servidor, estado, puerto: servidor.server.address().port, cerrar: () => new Promise((resolver) => servidor.close(resolver)) };
+  }
+  const adaptador = (puerto, extra = {}, tlsMinVersion = 'TLSv1.3') =>
+    new CorreoAdapter({ config: { host: '127.0.0.1', port: puerto, secure: false, user: 'usuario', pass: 'clave', remitente: 'Konrad Gourmet <no-reply@kg.co>', ...extra }, tlsMinVersion });
+  const intentar = async (adaptadorCorreo) => {
+    try { await adaptadorCorreo.enviarCorreo({ para: 'x@kg.co', asunto: 'a', texto: 'b' }); return null; } catch (error) { return error; }
+  };
+
+  it('envía por STARTTLS con TLS 1.3, autenticado, con asunto con tildes y el PDF adjunto intacto', async () => {
+    const { estado, puerto, cerrar } = await servidorSmtp();
+    const correo = adaptador(puerto);
+    try {
+      const r = await correo.enviarCorreo({ para: ['proveedor@kg.co'], asunto: 'Solicitud de cotización N.º 7', texto: 'Hola', html: '<p>Hola</p>', adjuntos: [{ nombre: 'cotizacion-7.pdf', contenido: pdf, tipoMime: 'application/pdf' }] });
+      const { mensaje, seguro } = estado.recibidos[0];
+      assert.ok(r.aceptados.includes('proveedor@kg.co'));
+      assert.equal(estado.tls, 'TLSv1.3');
+      assert.equal(seguro, true);
+      assert.equal(mensaje.subject, 'Solicitud de cotización N.º 7');
+      assert.ok(mensaje.from.text.includes('no-reply@kg.co'));
+      assert.equal(mensaje.attachments.length, 1);
+      assert.equal(mensaje.attachments[0].filename, 'cotizacion-7.pdf');
+      assert.equal(mensaje.attachments[0].contentType, 'application/pdf');
+      assert.ok(mensaje.attachments[0].content.equals(pdf), 'el PDF debe llegar sin alteraciones');
+    } finally { correo.cerrar(); await cerrar(); }
+  });
+
+  it('las credenciales SMTP inválidas dan un error de envío reintentable', async () => {
+    const { puerto, cerrar } = await servidorSmtp();
+    const correo = adaptador(puerto, { pass: 'equivocada' });
+    try {
+      const error = await intentar(correo);
+      assert.equal(error?.name, 'ServicioExternoError');
+      assert.equal(error.codigo, 'ENVIO');
+      assert.equal(error.reintentable, true);
+    } finally { correo.cerrar(); await cerrar(); }
+  });
+
+  it('si el servidor no ofrece cifrado NO envía ni se autentica en claro', async () => {
+    const { estado, puerto, cerrar } = await servidorSmtp({ disabledCommands: ['STARTTLS'], allowInsecureAuth: true });
+    const correo = adaptador(puerto);
+    try {
+      assert.equal((await intentar(correo))?.codigo, 'ENVIO');
+      assert.equal(estado.recibidos.length, 0);
+      assert.equal(estado.intentosAuth, 0, 'las credenciales no deben viajar sin cifrar');
+    } finally { correo.cerrar(); await cerrar(); }
+  });
+
+  it('exige la versión mínima de TLS configurada (CO-6): rechaza TLS 1.2 si se pide 1.3', async () => {
+    const solo12 = await servidorSmtp({ maxVersion: 'TLSv1.2' });
+    const exigente = adaptador(solo12.puerto);
+    const permisivo = adaptador(solo12.puerto, {}, 'TLSv1.2');
+    try {
+      assert.equal((await intentar(exigente))?.codigo, 'ENVIO');
+      assert.equal(solo12.estado.recibidos.length, 0);
+      assert.equal(await intentar(permisivo), null, 'con TLS_MIN_VERSION=TLSv1.2 (solo desarrollo) sí se acepta');
+      assert.equal(solo12.estado.tls, 'TLSv1.2');
+    } finally { exigente.cerrar(); permisivo.cerrar(); await solo12.cerrar(); }
+  });
+
+  it('un servidor SMTP caído da un error de envío reintentable', async () => {
+    const puertoCerrado = await puertoLibre();
+    const correo = adaptador(puertoCerrado);
+    try {
+      const error = await intentar(correo);
+      assert.equal(error?.codigo, 'ENVIO');
+      assert.equal(error.reintentable, true);
+    } finally { correo.cerrar(); }
   });
 });
 

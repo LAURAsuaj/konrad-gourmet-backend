@@ -128,7 +128,7 @@ export function iniciarWorker(
       }
       if (tareas.get(job.nombre)?.expresion === expresion) continue;
 
-      tareas.get(job.nombre)?.tarea.stop();
+      await tareas.get(job.nombre)?.tarea.destroy(); // destroy() la elimina del registro de node-cron; stop() solo la pausaría
       const tarea = cron.schedule(expresion, () => void correr(job), { timezone: config.timezone });
       tareas.set(job.nombre, { expresion, tarea });
       console.log(`[cron] ${job.nombre} programado: "${expresion}" (${config.timezone})`);
@@ -142,7 +142,8 @@ export function iniciarWorker(
   async function detener() {
     detenido = true;
     clearInterval(temporizador);
-    for (const { tarea } of tareas.values()) tarea.stop();
+    await Promise.all([...tareas.values()].map(({ tarea }) => tarea.destroy()));
+    tareas.clear();
     const pendientes = [...enEjecucion.values()];
     if (pendientes.length > 0) {
       await Promise.race([Promise.allSettled(pendientes), new Promise((r) => setTimeout(r, esperaMaximaApagadoMs))]);

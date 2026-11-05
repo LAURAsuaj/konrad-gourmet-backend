@@ -113,9 +113,11 @@ describe('Cron en ejecución', () => {
       await app.q("UPDATE parametro SET valor = '90'::jsonb WHERE clave = 'reintento_precio_sugerido_minutos'");
       assert.ok(await esperar(async () => worker.expresiones().descuento_diario === '15 4 * * *' && worker.expresiones().reintentar_precios === '0 */2 * * *', 6000),
         'el Administrador cambia la hora y el intervalo y el cron los adopta sin reiniciar');
+      assert.equal(cron.getTasks().size, 5, 'al reprogramar se elimina la tarea anterior: no se acumulan tareas en memoria');
     } finally {
       await worker.detener();
     }
+    assert.equal(cron.getTasks().size, 0, 'al detener el worker no queda ninguna tarea registrada');
     const cuenta = (await auditoriaDe('promociones')).length;
     await dormir(2500);
     assert.equal((await auditoriaDe('promociones')).length, cuenta, 'tras detener() no se ejecuta ningún job más');
