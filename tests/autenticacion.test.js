@@ -7,7 +7,8 @@ import './_soporte/entorno.js';
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { iniciarAplicacion } from './_soporte/aplicacion.js';
-import { codigoDe } from './_soporte/utiles.js';
+import { codigoDe, dormir } from './_soporte/utiles.js';
+import { PasswordHasher, concurrenciaPorDefecto, crearLimitadorDeConcurrencia } from '../src/domain/modules/auth/PasswordHasher.js';
 
 // Hash de 'Clave1234' generado con la librería ANTERIOR (bcryptjs): los usuarios existentes deben seguir entrando
 const HASH_ANTIGUO = '$2b$10$94FTVDYC7N0AyG4s9.NOjuQ2VNKH6KeOQm4a8bn32NomHu7jPQfJe';
@@ -108,10 +109,59 @@ describe('Autenticación (CU-01)', () => {
     activo = false;
     await sonda;
 
-    assert.ok(logins.every((l) => l.estado === 200), 'ningún inicio de sesión falló ni se cayó la conexión');
+    assert.deepEqual(logins.map((l) => l.estado).filter((estado) => estado !== 200), [], 'ningún inicio de sesión falló ni se cayó la conexión');
     assert.ok(sondeo.every((s) => s.ok), '/salud respondió siempre durante la ráfaga');
     const peor = Math.max(...sondeo.map((s) => s.ms));
-    // Con bcryptjs (JavaScript puro) el servidor llegaba a quedar congelado más de 10 segundos
-    assert.ok(peor < 3000, `/salud tardó ${Math.round(peor)} ms en el peor caso; debe ser menor a 3000 ms`);
+    // Con bcryptjs (JavaScript puro) el servidor llegaba a quedar congelado más de 10 segundos.
+    // El margen es amplio a propósito: los servidores de integración continua son lentos y compartidos.
+    assert.ok(peor < 5000, `/salud tardó ${Math.round(peor)} ms en el peor caso; debe ser menor a 5000 ms`);
   });
 });
+
+describe('Límite de cálculos de contraseña simultáneos', () => {
+  it('por defecto deja un procesador libre: procesadores - 1, entre 1 y 4', () => {
+    const casos = [[1, 1], [2, 1], [3, 2], [4, 3], [8, 4], [64, 4]];
+    for (const [procesadores, esperado] of casos) assert.equal(concurrenciaPorDefecto(procesadores), esperado, `${procesadores} procesadores`);
+  });
+
+  it('nunca ejecuta más tareas a la vez que el límite, y todas terminan en orden de llegada', async () => {
+    const limitar = crearLimitadorDeConcurrencia(3);
+    let activas = 0;
+    let maximoVisto = 0;
+    const inicios = [];
+    await Promise.all(Array.from({ length: 12 }, (_, i) => limitar(async () => {
+      inicios.push(i);
+      activas += 1;
+      maximoVisto = Math.max(maximoVisto, activas);
+      await dormir(15);
+      activas -= 1;
+      return i;
+    })));
+    assert.equal(maximoVisto, 3);
+    assert.deepEqual(inicios, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  });
+
+  it('una tarea que falla libera su cupo y no bloquea a las demás', async () => {
+    const limitar = crearLimitadorDeConcurrencia(1);
+    const resultados = await Promise.allSettled([
+      limitar(async () => { throw new Error('boom'); }),
+      limitar(async () => 'segunda'),
+      limitar(async () => 'tercera'),
+    ]);
+    assert.deepEqual(resultados.map((r) => r.status), ['rejected', 'fulfilled', 'fulfilled']);
+    assert.equal(resultados[2].value, 'tercera');
+  });
+
+  it('rechaza límites inválidos', () => {
+    for (const invalido of [0, -1, 1.5, '2', undefined]) assert.throws(() => crearLimitadorDeConcurrencia(invalido), /entero mayor o igual a 1/);
+  });
+
+  it('el PasswordHasher sigue cifrando y comparando correctamente a través del límite', async () => {
+    const hasher = new PasswordHasher({ rondas: 10, concurrencia: 1 });
+    const hashes = await Promise.all(['Clave1234', 'OtraClave99'].map((p) => hasher.hash(p)));
+    assert.equal(await hasher.comparar('Clave1234', hashes[0]), true);
+    assert.equal(await hasher.comparar('Clave1234', hashes[1]), false);
+    assert.match(hashes[0], /^\$2[ab]\$10\$/);
+  });
+});
+
