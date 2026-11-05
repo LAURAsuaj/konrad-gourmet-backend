@@ -1,0 +1,111 @@
+# Integración continua (CI) de Konrad Gourmet.
+#
+# Se ejecuta en cada subida a main/master, en cada Pull Request y a mano desde la pestaña
+# "Actions" de GitHub. Tiene dos trabajos:
+#   1. pruebas   ejecuta las 123 pruebas automáticas (npm test) contra un PostgreSQL real
+#   2. imagenes  valida docker-compose.yml, construye las imágenes de la API y del cron y
+#                comprueba que sus módulos nativos (bcrypt) cargan dentro de la imagen
+# Si algo falla, GitHub marca el commit en rojo y avisa por correo.
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+# Si se sube un cambio nuevo mientras otro corre, se cancela el anterior
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pruebas:
+    name: Pruebas automáticas
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: kg_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Base local de pruebas: el ejecutor solo acepta hosts locales y nombres que contengan "test"
+      TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/kg_test
+
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Instalar Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Ejecutar las pruebas
+        run: npm test
+
+  imagenes:
+    name: Imágenes Docker
+    runs-on: ubuntu-latest
+    needs: pruebas
+    timeout-minutes: 20
+
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Validar docker-compose.yml
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+
+      - name: Preparar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Construir la imagen de la API
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.api
+          load: true
+          push: false
+          tags: konrad-gourmet/api:ci
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      - name: Construir la imagen del cron
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.cron
+          load: true
+          push: false
+          tags: konrad-gourmet/cron:ci
+          cache-from: type=gha,scope=cron
+          cache-to: type=gha,scope=cron,mode=max
+
+      - name: Verificar los módulos nativos dentro de las imágenes (Alpine)
+        run: |
+          docker run --rm --entrypoint node konrad-gourmet/api:ci -e "require('bcrypt'); require('pdfkit'); require('pg'); require('express'); console.log('API: módulos OK')"
+          docker run --rm --entrypoint node konrad-gourmet/cron:ci -e "require('bcrypt'); require('node-cron'); require('pg'); console.log('CRON: módulos OK')"
+          docker run --rm --entrypoint id konrad-gourmet/api:ci

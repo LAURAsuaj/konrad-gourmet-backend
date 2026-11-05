@@ -1,5 +1,20 @@
+# Dependencias
 node_modules/
+
+# SECRETOS: nunca se suben al repositorio
 .env
+.env.*
+!.env.example
+certs/
+*.pem
+*.key
+# única excepción: la llave de PRUEBA de las pruebas automáticas (no sirve fuera de ellas)
+!tests/_soporte/certificado-prueba.key
+
+# Archivos generados
 *.log
 coverage/
+
+# Sistema operativo
 .DS_Store
+Thumbs.db
