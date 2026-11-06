@@ -1,183 +1,124 @@
-# Flujos de negocio
+# Arquitectura
 
-Cómo funciona cada proceso del sistema, de principio a fin. Las rutas están en la [Referencia de la API](API.md); los valores de configuración, en [Configuración](CONFIGURACION.md).
+## Visión general
 
-## Puesta en marcha del negocio
-
-1. Se crea el primer Administrador con `npm run admin:crear` ([Instalación](INSTALACION.md)).
-2. El Administrador carga los **catálogos**: puntos, mesas, categorías, marcas, unidades, productos y proveedores (`/api/v1/catalogos/:catalogo`).
-3. El Administrador crea los **usuarios** con su rol. Los Jefes de Cocina y los Meseros se asocian a un punto.
-4. El Administrador revisa las **reglas** (`/api/v1/reglas`), sobre todo los rangos de validación de cotizaciones.
-5. Cada Jefe de Cocina registra el **menú** de su punto y carga el **inventario**.
-
-## Seguridad y sesión
-
-- `POST /api/v1/auth/login` devuelve un token JWT con el rol. Los mensajes de error no revelan si falló el correo o la contraseña.
-- Tras **3 intentos fallidos** (regla `max_intentos_login`) la cuenta se bloquea hasta que el Administrador la habilita (`POST /api/v1/usuarios/:id/desbloquear`).
-- El token dura 30 minutos por defecto. Mientras el usuario esté activo, la aplicación llama a `POST /api/v1/auth/refrescar`; si queda inactivo más que ese tiempo, la sesión expira. A las 12 horas de iniciada hay que volver a entrar.
-- Al renovar se revalida la cuenta: si cambió el rol, se bloqueó o se inactivó, el token nuevo lo refleja o se rechaza.
-- Cerrar sesión (`POST /api/v1/auth/logout`) se audita. El token no se invalida en el servidor: la aplicación debe descartarlo.
-- Cada operación se valida dos veces: en la fachada y dentro del módulo, según el rol. Un intento sin permiso responde 403 y queda auditado como `ACCESO_DENEGADO`.
-
-## Cocina: menú y pedidos
-
-- **Menú.** El Jefe de Cocina registra los platos de su punto con sus **ingredientes** (producto, cantidad y unidad por porción). Los ingredientes son obligatorios porque de ellos se calcula lo que se descuenta del inventario. Un plato se puede inactivar: deja de aparecer para el Mesero y no se puede pedir.
-- **Pedidos.** El Mesero registra el pedido de una mesa de su punto. Las líneas repetidas del mismo plato se acumulan. El pedido queda disponible para la cocina (`GET /api/v1/pedidos`).
-
-## Inventario: descuento diario y alarmas
-
-### Descuento diario
-
-Es un proceso automático (por defecto a las 02:00; regla `hora_descuento_diario`). Todo ocurre en **una sola transacción**:
-
-1. Toma los pedidos que aún no se descontaron.
-2. Calcula el consumo de cada producto: `cantidad de platos × cantidad por porción` de cada ingrediente.
-3. Resta del inventario del punto **sin dejarlo nunca en negativo**, registra los movimientos y marca los pedidos como descontados.
-4. Guarda el evento `DescuentoDiarioCompletado`.
-
-Reejecutarlo no duplica nada y dos ejecuciones simultáneas procesan cada pedido una sola vez. Las inconsistencias quedan en el log de errores: plato sin ingredientes (se omite), producto sin inventario, o consumo mayor que lo disponible (el inventario queda en cero).
-
-### Alarma de stock bajo
-
-- Se genera cuando la cantidad de un producto baja al **25 % o menos** de su cantidad de referencia (regla `alarma_porcentaje`). Se evalúa después del descuento diario y después de cada ajuste manual (`PUT /api/v1/inventario`).
-- No se repite mientras siga activa. Al reabastecer por encima del umbral se cierra y puede volver a generarse.
-- Se avisa por correo a los Jefes de Cocina del punto afectado, con el producto, la cantidad actual y el punto. La aplicación la consulta en `GET /api/v1/inventario/alarmas` (no se empuja en tiempo real).
-
-## Compras: de la solicitud a la orden
+Dos procesos comparten el mismo código y la misma base de datos: la **API** (que además publica eventos) y el **cron** (procesos programados, que también publica eventos). Ambos se arman en un único lugar, `src/container.js`.
 
 ```mermaid
-flowchart LR
-  A[Jefe de Cocina: solicitud de alimentos] --> B[Se consulta el precio sugerido]
-  A --> C[Correo de confirmación]
-  B --> D[Auxiliar: solicitud de cotización al proveedor]
-  D --> E[Director de Compras: registra los valores]
-  E --> F{Validación automática}
-  F -->|OPCIONADA| G[Orden de compra]
-  F -->|SOSPECHOSA| H[Revisión manual]
-  F -->|RECHAZADA| I[Se descarta]
+flowchart TB
+  Cliente["Cliente (frontend, Postman)"] -->|HTTPS + JWT| Pres["Presentación\napiController · httpSecurity"]
+  Pres --> Fachada["Fachada\nSistemaFacade · operaciones"]
+  Cron["Cron\nworker.js · jobs"] -->|procesos como SISTEMA| Fachada
+  Fachada -->|delega| Dominio["Dominio\nmódulos · fábricas · eventos"]
+  Dominio --> Infra["Infraestructura\nrepositorios SQL · adaptadores"]
+  Infra --> BD[("PostgreSQL\nSupabase")]
+  Infra -->|TLS| Ext["Ministerio de Comercio\nCorreo SMTP · Redes sociales"]
+  BD --> Outbox["Publicador Outbox"]
+  Outbox --> Bus["Bus de eventos"]
+  Bus --> Manejadores["Manejadores"]
+  Manejadores --> Dominio
 ```
 
-### Estados
+## Capas y responsabilidades
 
-```mermaid
-stateDiagram-v2
-  direction LR
-  state "Solicitud" as S {
-    [*] --> PENDIENTE
-    PENDIENTE --> EN_TRAMITE: todos los alimentos tienen cotización
-  }
-  state "Cotización" as C {
-    [*] --> ENVIADA
-    ENVIADA --> OPCIONADA
-    ENVIADA --> SOSPECHOSA
-    ENVIADA --> RECHAZADA
-  }
-```
-
-(`EN_TRAMITE` se muestra como **EN TRÁMITE** en el sistema.)
-
-### Solicitud de alimentos
-
-El Jefe de Cocina indica categoría, producto, cantidad, unidad y, opcionalmente, marca. El producto debe pertenecer a la categoría y la unidad debe ser la del producto. La solicitud queda `PENDIENTE` con un consecutivo, y **después de responder** ocurre de forma asíncrona:
-
-- Se envía la confirmación por correo al solicitante.
-- Se consulta el **precio sugerido** de cada producto al Ministerio de Comercio.
-
-### Precio sugerido
-
-- Si el servicio falla, los precios obtenidos se conservan y solo se reintenta lo que falta: automáticamente con espera creciente, y después con el proceso programado `reintentar_precios` (cada 30 minutos por defecto).
-- El `valorTotalSugerido` de la solicitud se llena solo cuando **todos** sus alimentos tienen precio.
-- Un producto que el Ministerio no conoce, o con un valor inválido, queda registrado en el log de errores.
-
-### Solicitud de cotización a proveedores
-
-El Auxiliar de Compras elige la solicitud, el proveedor y el plazo máximo (no puede ser una fecha pasada), y opcionalmente solo algunos alimentos. El sistema genera un **PDF**, lo envía por correo al proveedor y registra la cotización en estado `ENVIADA`.
-
-- **Si el correo no puede enviarse, no se crea la cotización** y la respuesta es 503.
-- Un proveedor no cotiza dos veces el mismo alimento.
-- Cuando todos los alimentos de la solicitud ya tienen alguna cotización, la solicitud pasa a `EN TRÁMITE`.
-- Por el SRS solo se cotizan solicitudes `PENDIENTE`; este proyecto admite también `EN TRÁMITE` para poder pedir cotización a varios proveedores y compararlos. Se controla en `src/domain/modules/compras/estados.js` (`ESTADOS_SOLICITUD_COTIZABLES`).
-
-### Registro de valores
-
-El Director de Compras registra el **valor unitario** que cotizó el proveedor para **cada** alimento de la cotización (`PUT /api/v1/cotizaciones/:id/valores`). Solo se admite en cotizaciones `ENVIADA`. Si ya tenía valores, exige confirmar la sobrescritura.
-
-### Validación automática de cotizaciones
-
-Se ejecuta sola, de forma asíncrona, cuando hay valores cotizados y valor sugerido. Se calcula la **razón** `valor cotizado ÷ valor sugerido` y se compara con los rangos de la regla `rangos_validacion_cotizacion`:
-
-| Razón (con los valores iniciales) | Resultado | Significado |
+| Capa | Carpeta | Responsabilidad |
 |---|---|---|
-| Entre 0,70 y 1,10 | `OPCIONADA` | Precio razonable: puede generar orden |
-| Menor que 0,70 | `SOSPECHOSA` | Precio irrealmente bajo |
-| Mayor que 1,10 y hasta 1,30 | `SOSPECHOSA` | Más caro de lo esperado |
-| Mayor que 1,30 | `RECHAZADA` | Demasiado costosa |
+| Presentación | `src/presentation/` | Recibe HTTP y lo delega **directo** a la fachada. Cabeceras de seguridad, CORS, exigencia de TLS, límite de intentos de inicio de sesión y traducción de errores a HTTP |
+| Fachada | `src/facade/` | **Único punto de entrada** para HTTP y cron. Valida token y rol, delega al módulo y registra la auditoría. El catálogo `operaciones.js` define cada operación con sus roles |
+| Dominio | `src/domain/` | Lógica de negocio por módulo, eventos, fábricas y contratos de servicios externos. No importa nada de infraestructura: recibe sus dependencias por inyección |
+| Infraestructura | `src/infrastructure/` | Conexión a PostgreSQL, adaptadores de servicios externos, publicador Outbox y registro de errores |
+| Composición | `src/container.js` | Conecta las capas: crea adaptadores, repositorios, servicios y manejadores |
 
-- La comparación usa el valor sugerido de los alimentos que **cubre** la cotización, que coincide con el total de la solicitud cuando los cubre todos.
-- Si aún no hay valor sugerido completo, la cotización queda `ENVIADA` y se valida sola cuando el precio llega.
-- Si los rangos no están parametrizados o son inválidos, no se clasifica y se registra el error.
-- El resultado queda auditado, sin cifras.
+La dependencia va hacia adentro: Presentación → Fachada → Dominio, y la Infraestructura se inyecta en el Dominio, que solo conoce sus **contratos**.
 
-### Orden de compra
+## Patrones de diseño
 
-El Director de Compras consulta las cotizaciones `OPCIONADA` de la solicitud (`GET /api/v1/solicitudes/:id/cotizaciones-opcionadas`) y genera la orden de la elegida. Solo las `OPCIONADA` generan orden y cada cotización genera **una única** orden, con consecutivo, proveedor, alimentos, cantidades, valores y total.
+| Patrón | Dónde | Para qué |
+|---|---|---|
+| **Facade** | `facade/SistemaFacade.js` | Un solo punto de acceso: seguridad y auditoría en un lugar, y los controladores sin lógica |
+| **Factory Method** | `domain/factories/` (`NotificacionFactory` y tres creadores) | Construir confirmaciones de solicitud, alarmas de stock y promociones sin que quien las pide conozca su formato |
+| **Adapter** | `domain/services/` (contratos) e `infrastructure/adapters/` | Aislar el Ministerio de Comercio, el correo y las redes sociales detrás de interfaces propias |
+| **Outbox** | `infrastructure/outbox/EventOutboxPublisher.js` | El cambio de negocio y su evento se guardan en la misma transacción; un publicador los entrega después |
+| **Arquitectura basada en eventos** | `domain/events/` | Desacoplar efectos secundarios (correos, validaciones, alarmas) de la operación que los origina |
 
-## Analítica
+### Cómo funciona el Outbox
 
-### Tablero de control
+1. Un módulo cambia el estado de negocio y llama a `registrarEvento(tx, tipo, payload)` con **la misma transacción**: ambos se confirman o ninguno.
+2. El publicador (en la API y en el cron) reclama eventos pendientes con `FOR UPDATE SKIP LOCKED` y una reserva temporal: dos publicadores no toman el mismo evento y, si uno cae, otro lo retoma al vencer la reserva.
+3. Entrega cada evento a sus manejadores. Si alguno falla, el evento se reintenta con espera creciente (hasta 6 intentos por defecto) y solo se reejecutan los manejadores que no terminaron.
+4. La tabla `evento_procesado` garantiza que cada manejador procese cada evento una sola vez (entrega "al menos una vez" con idempotencia).
 
-Para el Director Comercial, con tres indicadores independientes y un periodo opcional:
+### Ejemplo: registrar una solicitud
 
-| Indicador | Cómo se calcula |
+```mermaid
+sequenceDiagram
+  participant J as Jefe de Cocina
+  participant API as API + Fachada
+  participant BD as PostgreSQL
+  participant P as Publicador Outbox
+  participant M as Manejadores
+  J->>API: POST /solicitudes
+  API->>BD: BEGIN · solicitud + detalle + evento SolicitudRegistrada · COMMIT
+  API-->>J: 201 (PENDIENTE)
+  P->>BD: reclama el evento
+  P->>M: SolicitudRegistrada
+  M->>M: Notificaciones: correo de confirmación
+  M->>M: PrecioSugerido: consulta al Ministerio
+  M->>BD: precios + total + evento PrecioSugeridoActualizado
+```
+
+## Persistencia
+
+PostgreSQL en Supabase, con SQL directo mediante `pg`. El esquema completo está en `src/infrastructure/database/schema.sql` (idempotente).
+
+| Grupo | Tablas |
 |---|---|
-| Producto más demandado | Consumo de los pedidos (platos × ingredientes) más la cantidad solicitada en solicitudes de alimentos |
-| Punto con mayor demanda | Platos vendidos por punto |
-| Mejor proveedor | Según la regla `criterio_mejor_proveedor`: más órdenes de compra, más cotizaciones `OPCIONADA` o menor razón de precio |
+| Catálogos y reglas | `punto`, `mesa`, `categoria`, `marca`, `unidad_medida`, `producto`, `proveedor`, `parametro` |
+| Seguridad | `usuario` |
+| Cocina | `plato`, `plato_ingrediente`, `pedido`, `pedido_detalle` |
+| Inventario | `inventario`, `movimiento_inventario`, `alarma` |
+| Compras | `solicitud_alimentos`, `detalle_solicitud`, `cotizacion`, `cotizacion_detalle`, `orden_compra` |
+| Analítica y avisos | `tendencia`, `promocion`, `notificacion` |
+| Auditoría y eventos | `auditoria`, `log_error`, `outbox`, `evento_procesado` |
 
-Si no hay datos, el indicador lo informa; si su cálculo falla, se registra el error y los otros dos siguen funcionando. **El tablero nunca muestra montos ni razones de precio**: los valores de compras solo los ve el área de compras.
+Garantías que da la base de datos: `auditoria` y `log_error` no admiten `UPDATE` ni `DELETE` (triggers); una sola alarma activa por producto y punto (índice único parcial); el inventario no puede quedar negativo; los consecutivos de solicitudes, cotizaciones y órdenes salen de secuencias. Todas las tablas tienen la seguridad a nivel de fila activada, sin políticas: la API se conecta con credenciales propias y la clave pública de Supabase no puede leerlas.
 
-### Promociones por tendencias
+## Seguridad
 
-Proceso automático (por defecto, los lunes a las 8:00):
+| Medida | Dónde |
+|---|---|
+| TLS 1.3 hacia la base de datos, el correo y los servicios externos; HTTPS propio con TLS 1.3 o proxy TLS delante de la API | `env.js`, adaptadores, `app.js` |
+| Contraseñas con bcrypt, con un tope de cálculos simultáneos (procesadores menos uno) | `PasswordHasher.js` |
+| JWT firmado de vida corta, con renovación y duración máxima de sesión | `TokenService.js`, `AuthService.js` |
+| Roles verificados en la fachada y otra vez en cada módulo | `operaciones.js`, módulos |
+| Bloqueo de cuenta tras intentos fallidos y límite por IP en el inicio de sesión | `AuthService.js`, `httpSecurity.js` |
+| Auditoría inmutable de acciones, accesos y denegaciones | `AuditoriaService`, triggers |
+| Valores de cotizaciones y órdenes visibles solo para el área de compras | Roles, tablero y auditoría sin montos |
+| Sin SQL construido con datos del usuario: parámetros y listas blancas | Repositorios, `CatalogosDefinicion.js` |
+| Cuerpo máximo de 100 KB, CORS por lista, cabeceras con Helmet | `httpSecurity.js`, `app.js` |
+| Contenedores sin root, sistema de archivos de solo lectura y sin capacidades | `Dockerfile.*`, `docker-compose.yml` |
 
-1. Consulta las tendencias en redes sociales. Si la API falla, lo registra y sigue solo con los productos más solicitados.
-2. Toma los productos más solicitados de los últimos 30 días.
-3. Cruza ambos por nombre: un producto muy solicitado que además es tendencia genera una promoción `COMBINADA` (hasta 5). Si ninguno coincide, se promueven los 3 más solicitados (`MAS_SOLICITADO`). Las tendencias que no corresponden a ningún producto generan hasta 2 promociones `TENDENCIA`.
-4. No repite una misma promoción dentro de 7 días.
-5. Cada promoción se envía por correo a los Jefes de Cocina, y el resultado de cada envío queda registrado (`GET /api/v1/promociones`).
+## Decisiones de diseño
 
-## Procesos automáticos
+| Decisión | Motivo |
+|---|---|
+| SQL directo con `pg` y no `supabase-js` | El Outbox necesita transacciones de varias sentencias, que PostgREST no ofrece |
+| JWT sin estado con renovación | Cumple la expiración por inactividad sin tabla de sesiones; a cambio, cerrar sesión no invalida el token en el servidor |
+| Alarmas por consulta (sondeo) y no en tiempo real | Supabase Realtime exige un JWT propio de Supabase, que este sistema no usa |
+| Entrega de eventos "al menos una vez" con idempotencia por manejador | Un fallo de correo o del Ministerio se reintenta sin duplicar efectos |
+| Catálogos como lista blanca (`CatalogosDefinicion.js`) | Un solo servicio genérico sin construir SQL con nombres que vengan del cliente |
+| Cron en un contenedor aparte, con bloqueo asesor de PostgreSQL | Que escalar la API no duplique procesos programados, y que dos cron no ejecuten lo mismo |
+| La unidad de un producto no cambia | Inventario, ingredientes y solicitudes dependen de ella |
+| Comparar la cotización con el subtotal sugerido de lo que cubre | Cotizaciones parciales se juzgan bien; coincide con el total si cubre todo |
 
-Corren en el contenedor `cron` (`cron/worker.js`), siempre a través de la fachada y como usuario `SISTEMA`; cada ejecución queda auditada como `EJECUCION`.
+## Pruebas y CI
 
-| Proceso | Qué hace | Cuándo |
-|---|---|---|
-| `descuento_diario` | Descuento de inventario y evaluación de alarmas | Hora de la regla `hora_descuento_diario` (02:00) |
-| `consultar_tendencias` | Tendencias y promociones | `CRON_TENDENCIAS` (lunes 8:00) |
-| `reintentar_precios` | Reintenta el precio sugerido de las solicitudes sin valor | Cada `reintento_precio_sugerido_minutos` (30) |
+`npm test` ejecuta más de 130 pruebas con su propia base PostgreSQL temporal (nunca Supabase): casos de uso, seguridad de la API (incluido TLS 1.3 real), envío real por SMTP, cron y la sincronía de esta documentación con el código. El CI de GitHub las repite contra PostgreSQL 16 y construye las dos imágenes Docker en cada cambio.
 
-- Si el Administrador cambia la hora o el intervalo, el cron lo adopta en un minuto o menos, sin reiniciar.
-- Un proceso no se superpone consigo mismo y, con varias instancias del contenedor, solo una ejecuta cada proceso a la vez.
-- Ejecución manual: `node cron/worker.js --ejecutar=<descuento_diario|consultar_tendencias|reintentar_precios>`.
+## Limitaciones conocidas
 
-## Eventos del sistema
-
-Cada cambio importante guarda su evento **en la misma transacción** (patrón Outbox). Un publicador los entrega a los manejadores de forma asíncrona, con reintentos si algo falla, y cada manejador procesa cada evento una sola vez.
-
-| Evento | Lo genera | Manejador | Efecto |
-|---|---|---|---|
-| `SolicitudRegistrada` | Registrar solicitud | `ManejadorNotificaciones` | Correo de confirmación al solicitante |
-| `SolicitudRegistrada` | Registrar solicitud | `ManejadorPrecioSugerido` | Consulta del precio sugerido |
-| `PrecioSugeridoActualizado` | Precio sugerido completo | `ManejadorValidacionCotizaciones` | Valida las cotizaciones que esperaban el precio |
-| `SolicitudCotizacionEnviada` | Generar cotización | `ManejadorEstadoSolicitud` | Pasa la solicitud a `EN TRÁMITE` si todo está cotizado |
-| `CotizacionRegistrada` | Registrar valores | `ManejadorValidacionCotizaciones` | Clasifica la cotización |
-| `DescuentoDiarioCompletado` | Descuento diario | `ManejadorAlarmas` | Evalúa las alarmas de los productos afectados |
-| `StockBajoDetectado` | Alarma nueva | `ManejadorNotificaciones` | Correo a los Jefes de Cocina del punto |
-| `PromocionGenerada` | Proceso de promociones | `ManejadorNotificaciones` | Correo de la promoción a los Jefes de Cocina |
-
-## Qué se audita
-
-- Quedan registradas las acciones de **escritura**, las consultas de información de negocio (solicitudes, cotizaciones, órdenes, inventario, tablero, auditoría), los accesos exitosos y fallidos, los accesos denegados y las ejecuciones de los procesos automáticos.
-- **No** se auditan las listas desplegables (catálogos y menú) ni la renovación de la sesión, por su volumen.
-- Los registros no se pueden modificar ni eliminar, y nunca contienen contraseñas ni montos de cotizaciones u órdenes.
-- Solo el Administrador consulta la auditoría y los logs de errores.
+- Cerrar sesión no invalida el token en el servidor; dura hasta su vencimiento.
+- No existe una ruta para que un usuario cambie su contraseña ni para restablecerla (el SRS no lo contempla).
+- Las alarmas no se empujan: la aplicación debe consultarlas.
+- Los adaptadores del Ministerio de Comercio y de redes sociales asumen un formato de respuesta (descrito en cada adaptador) que debe confirmarse con las APIs reales.
+- Este repositorio es solo el backend: no incluye el frontend.

@@ -1,175 +1,138 @@
-# Instalación
+# Configuración
 
-Guía para poner el proyecto a funcionar en un computador de desarrollo. Los comandos de Windows son para PowerShell.
+Toda la configuración del sistema sale de **variables de entorno**, leídas una sola vez al arrancar desde `src/config/env.js`, y de **reglas** que el Administrador cambia por la API sin reiniciar.
 
-## 1. Requisitos
+## Variables de entorno
 
-| Qué | Detalle |
-|---|---|
-| Node.js | Versión 20 o superior (se probó con la 22). Compruebe con `node -v` |
-| Git | Para clonar el repositorio. Compruebe con `git --version` |
-| Supabase | Un proyecto propio. Un plan gratuito sirve para desarrollo |
+Copie `.env.example` a `.env` y complete los valores. **No renombre** `.env.example`: la plantilla se conserva en el repositorio y `.env` (con secretos) nunca se sube. Los cambios en `.env` se aplican al reiniciar la API y el cron.
 
-## 2. Obtener el código e instalar dependencias
+El sistema lee **41 variables**; solo 4 son obligatorias.
 
-```bash
-git clone https://github.com/LAURAsuaj/konrad-gourmet-backend.git
-cd konrad-gourmet-backend
-npm install
-```
+### Servidor y red
 
-`npm install` también descarga una base PostgreSQL de pruebas (solo para desarrollo) de unos 100 MB.
+| Variable | Obligatoria | Valor por defecto | Descripción |
+|---|---|---|---|
+| `NODE_ENV` | No | `development` | Entorno de ejecución: `development`, `test` o `production`. En `production` se exigen TLS 1.3 y base de datos con SSL. |
+| `PORT` | No | `3000` | Puerto en el que escucha la API. |
+| `CORS_ORIGINS` | No | (vacío) | Orígenes (separados por coma) que pueden llamar a la API desde un navegador. Vacío = ninguno. |
+| `HTTPS_CERT_PATH` | No | — | Ruta del certificado TLS si la API termina TLS por sí misma. Se configura junto con `HTTPS_KEY_PATH`. |
+| `HTTPS_KEY_PATH` | No | — | Ruta de la llave privada del certificado. |
+| `TRUST_PROXY` | No | `false` | `true` si un proxy o balanceador termina TLS delante de la API. En producción hay que configurar esta o el par `HTTPS_CERT_PATH`/`HTTPS_KEY_PATH`. |
+| `TLS_MIN_VERSION` | No | `TLSv1.3` | Versión mínima de TLS hacia la base de datos, el correo y los servicios externos: `TLSv1.3` (obligatoria en producción) o `TLSv1.2` (solo desarrollo). |
 
-## 3. Datos de Supabase
+### Base de datos (Supabase / PostgreSQL)
 
-En su proyecto de Supabase reúna tres datos:
+| Variable | Obligatoria | Valor por defecto | Descripción |
+|---|---|---|---|
+| `DATABASE_URL` | Sí | — | Cadena de conexión. Use el **Session pooler** de Supabase (puerto 5432), no la conexión directa (solo IPv6). |
+| `DB_POOL_MAX` | No | `10` | Conexiones máximas por proceso. La API y el cron cuentan por separado; no supere el límite del pooler. |
+| `DB_SSL` | No | `true` | Conexión a la base de datos con TLS. Solo `false` en desarrollo con un Postgres local sin TLS; en producción debe ser `true`. |
+| `DB_SSL_REJECT_UNAUTHORIZED` | No | `true` | Verifica el certificado del servidor de base de datos. `false` solo en desarrollo; en producción déjelo en `true` y entregue `DB_SSL_CA`. |
+| `DB_SSL_CA` | No | — | Certificado CA de Supabase, en una sola línea con `\n` en lugar de los saltos de línea. |
+| `SUPABASE_URL` | Sí | — | URL del proyecto: `https://PROYECTO.supabase.co` (debe empezar por `https://`). |
+| `SUPABASE_SERVICE_ROLE_KEY` | Sí | — | Clave `service_role` de Supabase. **Secreta**: nunca en el repositorio. |
 
-1. **Cadena de conexión:** botón **Connect** → método **Session pooler** (puerto 5432). Se ve así: `postgresql://postgres.PROYECTO:[YOUR-PASSWORD]@aws-0-REGION.pooler.supabase.com:5432/postgres`. Reemplace `[YOUR-PASSWORD]` por su contraseña, **sin los corchetes**.
-   - **No use la conexión directa** (`db.PROYECTO.supabase.co`): solo responde por IPv6 y desde la mayoría de redes da `connection timeout`.
-   - Si la contraseña tiene símbolos (`@`, `#`, `/`, `:`, `%`), cámbiela por una solo con letras y números (Project Settings → Database → Reset database password).
-2. **URL del proyecto:** `https://PROYECTO.supabase.co` (Project Settings → API).
-3. **Clave `service_role`:** Project Settings → API Keys. Es secreta.
+### Autenticación y seguridad
 
-## 4. Crear el archivo `.env`
+| Variable | Obligatoria | Valor por defecto | Descripción |
+|---|---|---|---|
+| `JWT_SECRET` | Sí | — | Secreto con el que se firman los tokens. Mínimo 32 caracteres y aleatorio. **Secreto.** |
+| `JWT_EXPIRES_IN` | No | `30m` | Vida de cada token (`30m`, `1h`). Con la renovación, una sesión inactiva más de este tiempo expira. |
+| `JWT_ISSUER` | No | `konrad-gourmet` | Emisor que se escribe y valida en los tokens. |
+| `BCRYPT_ROUNDS` | No | `12` | Costo de bcrypt (10 a 15). Con 12, cada contraseña tarda unos 270 ms de un procesador. |
+| `LOGIN_RATE_LIMIT_MAX` | No | `10` | Intentos de inicio de sesión fallidos permitidos por IP dentro de la ventana; después responde 429. |
+| `LOGIN_RATE_LIMIT_WINDOW_MIN` | No | `15` | Ventana, en minutos, del límite anterior. |
 
-**Copie** la plantilla (no la renombre: `.env.example` se conserva en el repositorio):
+### Eventos (Outbox)
 
-```bash
-cp .env.example .env          # Windows: copy .env.example .env
-```
+| Variable | Obligatoria | Valor por defecto | Descripción |
+|---|---|---|---|
+| `OUTBOX_POLL_MS` | No | `2000` | Cada cuántos milisegundos el publicador revisa los eventos pendientes. |
+| `OUTBOX_BATCH_SIZE` | No | `25` | Eventos que reclama en cada ciclo. |
+| `OUTBOX_MAX_ATTEMPTS` | No | `6` | Intentos de entrega antes de marcar un evento como `FALLIDO`. |
+| `OUTBOX_RETRY_BASE_SECONDS` | No | `15` | Espera base entre reintentos; se duplica en cada intento, con un tope de una hora. |
+| `OUTBOX_LEASE_SECONDS` | No | `60` | Tiempo que un publicador "reserva" un evento; si el proceso cae, otro lo retoma al vencer. |
 
-Complete al menos estas variables:
+### Procesos automáticos (cron)
 
-```env
-DATABASE_URL=postgresql://postgres.PROYECTO:SuClave@aws-0-REGION.pooler.supabase.com:5432/postgres
-SUPABASE_URL=https://PROYECTO.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=la-clave-service-role
-JWT_SECRET=un-secreto-largo-y-aleatorio-de-32-o-mas-caracteres
-DB_SSL_REJECT_UNAUTHORIZED=false
-```
+| Variable | Obligatoria | Valor por defecto | Descripción |
+|---|---|---|---|
+| `CRON_TIMEZONE` | No | `America/Bogota` | Zona horaria de los procesos programados. |
+| `CRON_DESCUENTO_FALLBACK` | No | `0 2 * * *` | Expresión cron del descuento diario si no se puede leer la regla `hora_descuento_diario`. |
+| `CRON_TENDENCIAS` | No | `0 8 * * 1` | Expresión cron de la consulta de tendencias y envío de promociones (por defecto, los lunes a las 8:00). |
+| `CRON_REINTENTO_PRECIOS` | No | `*/30 * * * *` | Expresión cron de respaldo del reintento del precio sugerido; la regla `reintento_precio_sugerido_minutos` tiene prioridad. |
 
-Genere el `JWT_SECRET` con:
+### Ministerio de Comercio (precio sugerido)
 
-```bash
-node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
-```
+| Variable | Obligatoria | Valor por defecto | Descripción |
+|---|---|---|---|
+| `MINCOMERCIO_API_URL` | No | — | URL base de la API. Debe ser HTTPS (solo se admite HTTP hacia localhost fuera de producción). |
+| `MINCOMERCIO_API_KEY` | No | — | Credencial enviada como `Authorization: Bearer`. **Secreta.** |
+| `MINCOMERCIO_TIMEOUT_MS` | No | `8000` | Tiempo máximo de espera por consulta, en milisegundos. |
 
-`DB_SSL_REJECT_UNAUTHORIZED=false` es un atajo **solo para desarrollo**: la conexión sigue cifrada, pero no se verifica la identidad del servidor. Para verificarla, descargue el certificado en Database Settings → SSL Configuration, conviértalo a una sola línea (cada salto de línea por `\n`) y póngalo en `DB_SSL_CA`, quitando la línea anterior. Todas las variables están descritas en [Configuración](CONFIGURACION.md).
+### Correo electrónico (SMTP)
 
-## 5. Crear las tablas
+| Variable | Obligatoria | Valor por defecto | Descripción |
+|---|---|---|---|
+| `SMTP_HOST` | No | — | Servidor SMTP. Sin él no se pueden enviar correos (ni cotizaciones a proveedores). |
+| `SMTP_PORT` | No | `587` | Puerto SMTP (587 con STARTTLS, 465 con TLS directo). |
+| `SMTP_SECURE` | No | `false` | `true` para TLS directo (puerto 465); `false` para STARTTLS, que se exige siempre. |
+| `SMTP_USER` | No | — | Usuario SMTP. |
+| `SMTP_PASS` | No | — | Contraseña SMTP. **Secreta.** |
+| `CORREO_REMITENTE` | No | `Konrad Gourmet <no-reply@konradgourmet.com>` | Remitente de los correos del sistema. |
 
-Abra **SQL Editor** en Supabase, pegue todo el contenido de `src/infrastructure/database/schema.sql` y pulse **Run**. Debe responder `Success. No rows returned`. Se puede ejecutar varias veces sin problema. (Alternativa con `psql` instalado: `npm run db:schema`.)
+### Redes sociales (tendencias)
 
-## 6. Crear el primer administrador
+| Variable | Obligatoria | Valor por defecto | Descripción |
+|---|---|---|---|
+| `REDES_API_URL` | No | — | URL base de la API de tendencias. Debe ser HTTPS. |
+| `REDES_API_TOKEN` | No | — | Credencial enviada como `Authorization: Bearer`. **Secreta.** |
+| `REDES_TIMEOUT_MS` | No | `8000` | Tiempo máximo de espera, en milisegundos. |
 
-Sin administrador nadie puede crear cuentas. La contraseña debe tener al menos 8 caracteres, con letras y números.
+En producción, `NODE_ENV=production` activa estas validaciones al arrancar: `TLS_MIN_VERSION` debe ser `TLSv1.3` y `DB_SSL` debe ser `true`; además, la API exige `HTTPS_CERT_PATH`/`HTTPS_KEY_PATH` o `TRUST_PROXY=true`.
 
-```bash
-# Linux / Mac
-ADMIN_NOMBRE="Su Nombre" ADMIN_CORREO=admin@empresa.com ADMIN_PASSWORD='Clave12345' npm run admin:crear
-```
+## Perfiles recomendados
 
-```powershell
-# Windows (PowerShell)
-$env:ADMIN_NOMBRE="Su Nombre"; $env:ADMIN_CORREO="admin@empresa.com"; $env:ADMIN_PASSWORD="Clave12345"; npm run admin:crear
-```
+| Variable | Desarrollo local | Producción |
+|---|---|---|
+| `NODE_ENV` | `development` | `production` |
+| `DATABASE_URL` | Session pooler de Supabase | Session pooler de Supabase |
+| `DB_SSL_REJECT_UNAUTHORIZED` | `false` (atajo para la primera prueba) | `true`, con `DB_SSL_CA` |
+| `TLS_MIN_VERSION` | `TLSv1.3` (o `TLSv1.2` si un servicio local no lo soporta) | `TLSv1.3` |
+| `JWT_SECRET` | Un valor propio, aunque sea de prueba | Aleatorio, largo y distinto al de desarrollo |
+| `SMTP_*` | Ethereal u otro buzón de pruebas | Servidor SMTP real |
+| `MINCOMERCIO_*` / `REDES_*` | `scripts/mockServicios.js` en `http://127.0.0.1:4010` | APIs reales |
+| `CORS_ORIGINS` | `http://localhost:5173` | Dominio real del frontend |
+| `HTTPS_*` / `TRUST_PROXY` | No hacen falta | Una de las dos opciones es obligatoria |
 
-Debe responder `Administrador creado: admin@empresa.com`. El correo es solo su nombre de usuario en este sistema: no tiene relación con su cuenta de Supabase ni de GitHub.
+## Reglas del sistema
 
-## 7. Arrancar
+Se consultan con `GET /api/v1/reglas` y se cambian con `PUT /api/v1/reglas/:clave` (solo el Administrador). El valor se valida antes de guardarse y se aplica de inmediato; el cron relee la programación cada minuto.
 
-En dos terminales distintas, dentro de la carpeta del proyecto:
+| Clave | Valor inicial | Valores válidos | Descripción |
+|---|---|---|---|
+| `alarma_porcentaje` | `25` | Número mayor que 0 y máximo 100 | Porcentaje de la cantidad de referencia en el que se dispara la alarma de stock bajo (CU-07) |
+| `max_intentos_login` | `3` | Entero de 1 a 10 | Intentos fallidos de inicio de sesión antes de bloquear la cuenta (CU-01) |
+| `hora_descuento_diario` | `"02:00"` | Texto `HH:MM` en formato de 24 horas | Hora (HH:MM) del descuento diario de inventario (CU-06) |
+| `rangos_validacion_cotizacion` | `{"sospechosa_bajo": 0.70, "opcionada_max": 1.10, "rechazada_sobre": 1.30}` | Tres números mayores que 0 con `sospechosa_bajo` ≤ `opcionada_max` ≤ `rechazada_sobre` | Razón valor cotizado / valor sugerido que define RECHAZADA, SOSPECHOSA y OPCIONADA (CU-12) |
+| `criterio_mejor_proveedor` | `{"metrica": "ordenes_compra"}` | `metrica`: `ordenes_compra`, `cotizaciones_opcionadas` o `menor_razon_precio` | Criterio del KPI mejor proveedor del tablero BAM (CU-14) |
+| `reintento_precio_sugerido_minutos` | `30` | Entero de 1 a 1440 | Minutos entre reintentos de consulta al Ministerio de Comercio (CU-10) |
 
-```bash
-npm start              # la API
-npm run start:cron     # los procesos automáticos (puede dejarlo apagado en la primera prueba)
-```
+> **Pendiente de negocio:** los tres umbrales de `rangos_validacion_cotizacion` son valores iniciales propuestos. El SRS indica que los define el área de compras; deben confirmarse con ella antes de producción.
 
-La API debe mostrar `Konrad Gourmet escuchando en el puerto 3000`. Compruebe `http://localhost:3000/salud`: debe responder `{"datos":{"estado":"ok"}}`.
+## Catálogos
 
-## 8. Probar la API desde PowerShell
+Listas parametrizables que el Administrador mantiene con `/api/v1/catalogos/:catalogo`. Un valor que ya está en uso no se elimina: se inactiva con `{"activo": false}`. Los nombres no se repiten, sin distinguir mayúsculas.
 
-Pegue estas dos funciones (en una terminal nueva, mientras la API corre):
+| Catálogo | Campos del cuerpo | Notas |
+|---|---|---|
+| `puntos` | `nombre` | Sucursales o restaurantes |
+| `mesas` | `puntoId`, `numero` | No se repite el número dentro del punto; el punto no se puede cambiar |
+| `categorias` | `nombre` |  |
+| `marcas` | `nombre` |  |
+| `unidades` | `nombre`, `abreviatura` | La abreviatura es lo que se muestra (por ejemplo `kg`) |
+| `productos` | `nombre`, `categoriaId`, `unidadId` | La unidad no se puede cambiar una vez creado el producto |
+| `proveedores` | `nombre`, `correo` (opcional) | Sin correo no se le pueden enviar cotizaciones |
 
-```powershell
-function Entrar($correo, $clave) {
-  $r = Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/v1/auth/login -ContentType 'application/json' -Body (@{correo=$correo; password=$clave} | ConvertTo-Json)
-  @{ Authorization = "Bearer $($r.datos.token)" }
-}
-function Api($metodo, $ruta, $cuerpo) {
-  $p = @{ Method=$metodo; Uri="http://localhost:3000/api/v1/$ruta"; Headers=$h; ContentType='application/json' }
-  if ($cuerpo) { $p.Body = ($cuerpo | ConvertTo-Json -Depth 6) }
-  try { (Invoke-RestMethod @p).datos } catch { Write-Host $_.ErrorDetails.Message -ForegroundColor Red }
-}
-```
+Tipos: `nombre`, `abreviatura` y `correo` son texto (el correo se valida y se guarda en minúsculas); `puntoId`, `categoriaId` y `unidadId` son ids de otros catálogos; `numero` es un entero positivo.
 
-Cargue datos básicos como Administrador (la sesión dura 30 minutos; si expira, repita la primera línea):
-
-```powershell
-$h = Entrar 'admin@empresa.com' 'Clave12345'
-$punto = Api Post 'catalogos/puntos' @{ nombre='Chapinero' }
-$kg    = Api Post 'catalogos/unidades' @{ nombre='kilogramo'; abreviatura='kg' }
-$cat   = Api Post 'catalogos/categorias' @{ nombre='Granos' }
-$arroz = Api Post 'catalogos/productos' @{ nombre='Arroz'; categoriaId=$cat.id; unidadId=$kg.id }
-$prov  = Api Post 'catalogos/proveedores' @{ nombre='Proveedor A'; correo='proveedor@correo.com' }
-$mesa  = Api Post 'catalogos/mesas' @{ puntoId=$punto.id; numero=1 }
-$jefe  = Api Post 'usuarios' @{ nombre='Jefe Cocina'; correo='jefe@empresa.com'; password='Clave1234'; rol='JEFE_COCINA'; puntoId=$punto.id }
-```
-
-Cada comando imprime lo que creó, con su `id`. El resto de las rutas está en la [Referencia de la API](API.md) y los pasos de negocio en [Flujos](FLUJOS.md).
-
-## 9. Servicios externos en desarrollo
-
-Parte del flujo depende de servicios externos. Sin ellos funciona el login, los catálogos, el menú, los pedidos, el inventario y las alarmas (el aviso por correo fallará y se reintentará), pero **no** se pueden generar cotizaciones (exigen enviar el correo) ni clasificarlas (exigen el precio sugerido).
-
-**Precio sugerido y tendencias: simulador local.** En una terminal aparte:
-
-```bash
-node scripts/mockServicios.js
-```
-
-y agregue al `.env` (use `127.0.0.1`, no `localhost`), reiniciando la API después:
-
-```env
-MINCOMERCIO_API_URL=http://127.0.0.1:4010
-MINCOMERCIO_API_KEY=clave-de-prueba
-REDES_API_URL=http://127.0.0.1:4010
-REDES_API_TOKEN=token-de-prueba
-```
-
-El simulador responde Arroz 4.500, Pollo 12.000, Papa 3.200, Carne 28.000 y Leche 4.200; cualquier otro producto recibe un precio estable calculado de su nombre; un nombre que contenga `sinprecio` responde 404. Solo sirve para desarrollo.
-
-**Correo: buzón de pruebas.** Cree una cuenta gratuita en <https://ethereal.email> (recibe los correos y no los entrega a nadie) y complete:
-
-```env
-SMTP_HOST=smtp.ethereal.email
-SMTP_PORT=587
-SMTP_SECURE=false
-SMTP_USER=el-usuario-de-ethereal
-SMTP_PASS=la-contraseña-de-ethereal
-```
-
-## 10. Ejecutar las pruebas
-
-```bash
-npm test
-```
-
-Tarda unos 2 minutos. Use una terminal normal (no de administrador).
-
-## Problemas frecuentes
-
-| Mensaje | Causa y solución |
-|---|---|
-| `Faltan variables de entorno obligatorias` | Falta alguna de `DATABASE_URL`, `JWT_SECRET`, `SUPABASE_URL` o `SUPABASE_SERVICE_ROLE_KEY` en el `.env` |
-| `Invalid supabaseUrl: Must be a valid HTTP or HTTPS URL` | `SUPABASE_URL` no empieza por `https://` |
-| `password authentication failed for user "postgres"` | Con el pooler el usuario es `postgres.PROYECTO`, no `postgres`; o la contraseña no coincide. Compruebe también que `DATABASE_URL` aparece una sola vez en el `.env` |
-| `Connection terminated due to connection timeout`, `ENETUNREACH` o `ENOTFOUND` | Está usando la conexión directa (solo IPv6). Cambie a la cadena del Session pooler |
-| `self-signed certificate in certificate chain` | Entregue el certificado en `DB_SSL_CA`, o use `DB_SSL_REJECT_UNAUTHORIZED=false` solo en desarrollo |
-| `tlsv1 alert protocol version` | Un servicio local no admite TLS 1.3: ponga `TLS_MIN_VERSION=TLSv1.2` solo en desarrollo |
-| `relation "usuario" does not exist` | No se ejecutó `schema.sql` (paso 5) |
-| `Ya existe un Administrador` | Ya lo creó; continúe con el paso 7 |
-| `Falta SMTP_HOST en la configuración` | No hay correo configurado: las alarmas lo registran y reintentan; las cotizaciones no se pueden generar |
-| `NO_AUTENTICADO`, "La sesión expiró" | El token venció (30 minutos): inicie sesión de nuevo |
-| 429 `DEMASIADOS_INTENTOS` | Demasiados inicios de sesión fallidos desde la misma IP: espere 15 minutos |
-| `npm test` no arranca la base | Ejecute en una terminal normal, no como administrador |

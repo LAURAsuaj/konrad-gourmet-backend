@@ -1,124 +1,144 @@
-# Arquitectura
+# Despliegue y operación
 
-## Visión general
+## Cómo se despliega
 
-Dos procesos comparten el mismo código y la misma base de datos: la **API** (que además publica eventos) y el **cron** (procesos programados, que también publica eventos). Ambos se arman en un único lugar, `src/container.js`.
+El sistema son **dos contenedores independientes** que comparten una misma base de datos externa (Supabase):
 
-```mermaid
-flowchart TB
-  Cliente["Cliente (frontend, Postman)"] -->|HTTPS + JWT| Pres["Presentación\napiController · httpSecurity"]
-  Pres --> Fachada["Fachada\nSistemaFacade · operaciones"]
-  Cron["Cron\nworker.js · jobs"] -->|procesos como SISTEMA| Fachada
-  Fachada -->|delega| Dominio["Dominio\nmódulos · fábricas · eventos"]
-  Dominio --> Infra["Infraestructura\nrepositorios SQL · adaptadores"]
-  Infra --> BD[("PostgreSQL\nSupabase")]
-  Infra -->|TLS| Ext["Ministerio de Comercio\nCorreo SMTP · Redes sociales"]
-  BD --> Outbox["Publicador Outbox"]
-  Outbox --> Bus["Bus de eventos"]
-  Bus --> Manejadores["Manejadores"]
-  Manejadores --> Dominio
+| Servicio | Imagen | Qué hace |
+|---|---|---|
+| `api` | `Dockerfile.api` | La API HTTP y el publicador de eventos |
+| `cron` | `Dockerfile.cron` | Los procesos automáticos y el publicador de eventos. **Ejecute una sola instancia por entorno** |
+
+Ambas imágenes parten de `node:22-alpine`, instalan solo las dependencias de producción, corren sin privilegios de root y traen un `HEALTHCHECK`. El `docker-compose.yml` las ejecuta además con el sistema de archivos en solo lectura, sin capacidades de Linux y con `no-new-privileges`.
+
+> Las imágenes se construyen y verifican en cada cambio mediante el CI (que comprueba, entre otras cosas, que `bcrypt` carga dentro de Alpine). Arrancarlas con `docker compose` y datos reales es algo que debe validarse en el primer despliegue.
+
+## Paso a paso con Docker Compose
+
+Requisitos del servidor: Docker Engine con Compose v2, acceso a Internet hacia Supabase y los servicios externos, y un certificado TLS.
+
+1. **Obtenga el código** en el servidor: `git clone` del repositorio.
+2. **Configure `.env`** a partir de `.env.example` ([Configuración](CONFIGURACION.md)). Use los valores de producción de la lista de verificación de más abajo.
+3. **Aplique el esquema** una sola vez: pegue `src/infrastructure/database/schema.sql` en el SQL Editor de Supabase.
+4. **Coloque el certificado TLS** en `./certs/fullchain.pem` y `./certs/privkey.pem` (o cambie la ruta con `CERTS_DIR`). Para una prueba en staging puede crear uno autofirmado:
+   ```bash
+   openssl req -x509 -newkey rsa:2048 -nodes -keyout certs/privkey.pem -out certs/fullchain.pem -days 30 -subj "/CN=localhost"
+   ```
+   Si un proxy o balanceador termina TLS 1.3 delante de la API, quite `HTTPS_CERT_PATH`, `HTTPS_KEY_PATH` y el volumen de certificados del `docker-compose.yml`, y defina `TRUST_PROXY=true`.
+5. **Levante los servicios:**
+   ```bash
+   docker compose up -d --build
+   ```
+6. **Verifique que quedaron sanos:**
+   ```bash
+   docker compose ps          # ambos deben aparecer como "healthy"
+   docker compose logs -f
+   ```
+7. **Cree el primer administrador** (una sola vez):
+   ```bash
+   docker compose run --rm -e ADMIN_NOMBRE="Nombre" -e ADMIN_CORREO=admin@empresa.com -e ADMIN_PASSWORD='Clave12345' api npm run admin:crear
+   ```
+8. **Pruebe** `https://SU-DOMINIO:8443/salud` (el puerto público se cambia con `API_PUBLIC_PORT`).
+
+## TLS
+
+En producción la API **no arranca** sin una de estas dos opciones:
+
+| Opción | Configuración |
+|---|---|
+| La API termina TLS | `HTTPS_CERT_PATH` y `HTTPS_KEY_PATH`. Acepta solo TLS 1.3 |
+| Un proxy termina TLS | `TRUST_PROXY=true`. La API rechaza (426) las peticiones que no lleguen por TLS; `/salud` queda exenta para las sondas internas |
+
+Hacia la base de datos, el correo y los servicios externos se exige TLS 1.3 (`TLS_MIN_VERSION`), y no se envían credenciales por conexiones sin cifrar.
+
+## Operación diaria
+
+| Tarea | Cómo |
+|---|---|
+| Ver el estado | `docker compose ps` y `GET /salud` |
+| Ver los logs de los contenedores | `docker compose logs -f api` o `cron` |
+| Ver errores del sistema | `GET /api/v1/logs?nivel=ERROR` (Administrador) |
+| Ver quién hizo qué | `GET /api/v1/auditoria` (Administrador) |
+| Reiniciar | `docker compose restart api cron` (necesario tras cambiar el `.env`) |
+| Actualizar a una versión nueva | `git pull` y `docker compose up -d --build` |
+| Ejecutar un proceso programado a mano | `docker compose exec cron node cron/worker.js --ejecutar=descuento_diario` (o `consultar_tendencias`, `reintentar_precios`) |
+| Cambiar la hora del descuento o los rangos de validación | `PUT /api/v1/reglas/:clave`; no requiere reiniciar |
+
+### Eventos atascados
+
+Si el correo o un servicio externo estuvo caído mucho tiempo, un evento puede agotar sus reintentos y quedar `FALLIDO`. Para verlos, en el SQL Editor de Supabase:
+
+```sql
+SELECT id, tipo, intentos, ultimo_error, creado_en FROM outbox WHERE estado = 'FALLIDO' ORDER BY creado_en;
 ```
 
-## Capas y responsabilidades
+Cuando el servicio ya funcione, se reintentan con:
 
-| Capa | Carpeta | Responsabilidad |
-|---|---|---|
-| Presentación | `src/presentation/` | Recibe HTTP y lo delega **directo** a la fachada. Cabeceras de seguridad, CORS, exigencia de TLS, límite de intentos de inicio de sesión y traducción de errores a HTTP |
-| Fachada | `src/facade/` | **Único punto de entrada** para HTTP y cron. Valida token y rol, delega al módulo y registra la auditoría. El catálogo `operaciones.js` define cada operación con sus roles |
-| Dominio | `src/domain/` | Lógica de negocio por módulo, eventos, fábricas y contratos de servicios externos. No importa nada de infraestructura: recibe sus dependencias por inyección |
-| Infraestructura | `src/infrastructure/` | Conexión a PostgreSQL, adaptadores de servicios externos, publicador Outbox y registro de errores |
-| Composición | `src/container.js` | Conecta las capas: crea adaptadores, repositorios, servicios y manejadores |
-
-La dependencia va hacia adentro: Presentación → Fachada → Dominio, y la Infraestructura se inyecta en el Dominio, que solo conoce sus **contratos**.
-
-## Patrones de diseño
-
-| Patrón | Dónde | Para qué |
-|---|---|---|
-| **Facade** | `facade/SistemaFacade.js` | Un solo punto de acceso: seguridad y auditoría en un lugar, y los controladores sin lógica |
-| **Factory Method** | `domain/factories/` (`NotificacionFactory` y tres creadores) | Construir confirmaciones de solicitud, alarmas de stock y promociones sin que quien las pide conozca su formato |
-| **Adapter** | `domain/services/` (contratos) e `infrastructure/adapters/` | Aislar el Ministerio de Comercio, el correo y las redes sociales detrás de interfaces propias |
-| **Outbox** | `infrastructure/outbox/EventOutboxPublisher.js` | El cambio de negocio y su evento se guardan en la misma transacción; un publicador los entrega después |
-| **Arquitectura basada en eventos** | `domain/events/` | Desacoplar efectos secundarios (correos, validaciones, alarmas) de la operación que los origina |
-
-### Cómo funciona el Outbox
-
-1. Un módulo cambia el estado de negocio y llama a `registrarEvento(tx, tipo, payload)` con **la misma transacción**: ambos se confirman o ninguno.
-2. El publicador (en la API y en el cron) reclama eventos pendientes con `FOR UPDATE SKIP LOCKED` y una reserva temporal: dos publicadores no toman el mismo evento y, si uno cae, otro lo retoma al vencer la reserva.
-3. Entrega cada evento a sus manejadores. Si alguno falla, el evento se reintenta con espera creciente (hasta 6 intentos por defecto) y solo se reejecutan los manejadores que no terminaron.
-4. La tabla `evento_procesado` garantiza que cada manejador procese cada evento una sola vez (entrega "al menos una vez" con idempotencia).
-
-### Ejemplo: registrar una solicitud
-
-```mermaid
-sequenceDiagram
-  participant J as Jefe de Cocina
-  participant API as API + Fachada
-  participant BD as PostgreSQL
-  participant P as Publicador Outbox
-  participant M as Manejadores
-  J->>API: POST /solicitudes
-  API->>BD: BEGIN · solicitud + detalle + evento SolicitudRegistrada · COMMIT
-  API-->>J: 201 (PENDIENTE)
-  P->>BD: reclama el evento
-  P->>M: SolicitudRegistrada
-  M->>M: Notificaciones: correo de confirmación
-  M->>M: PrecioSugerido: consulta al Ministerio
-  M->>BD: precios + total + evento PrecioSugeridoActualizado
+```sql
+UPDATE outbox SET estado = 'PENDIENTE', intentos = 0, disponible_en = now(), bloqueado_hasta = NULL WHERE estado = 'FALLIDO';
 ```
 
-## Persistencia
+### Rotación de secretos
 
-PostgreSQL en Supabase, con SQL directo mediante `pg`. El esquema completo está en `src/infrastructure/database/schema.sql` (idempotente).
+- Cambiar `JWT_SECRET` invalida todas las sesiones abiertas: los usuarios deben iniciar sesión de nuevo.
+- Las contraseñas de los usuarios no dependen de `JWT_SECRET`. **Hoy no existe una ruta para cambiar la contraseña de un usuario** (el SRS no la contempla): por eso conviene crear el Administrador inicial y los usuarios con contraseñas robustas desde el principio.
+- Tras rotar la clave `service_role`, la contraseña de la base de datos o las credenciales SMTP, actualice el `.env` y reinicie.
 
-| Grupo | Tablas |
+### Respaldo y recuperación
+
+Los datos viven en Supabase. Compruebe qué respaldo incluye su plan (los automáticos y la recuperación a un punto en el tiempo dependen del plan contratado) y pruebe restaurar uno antes de necesitarlo. La auditoría y el log de errores forman parte de esos datos.
+
+## Integración continua
+
+El archivo `.github/workflows/ci.yml` se ejecuta en cada subida a `main`, en cada Pull Request y a mano desde la pestaña Actions de GitHub:
+
+1. **Pruebas automáticas:** instala dependencias, levanta PostgreSQL 16 y ejecuta `npm test`.
+2. **Imágenes Docker:** valida `docker-compose.yml`, construye las dos imágenes y comprueba que sus módulos nativos cargan.
+
+El CI no despliega: publicar las imágenes y desplegarlas automáticamente depende de dónde se aloje el sistema y queda como siguiente paso.
+
+## Lista de verificación para producción
+
+Marque cada punto antes de salir:
+
+**Configuración**
+
+- [ ] `NODE_ENV=production`.
+- [ ] `DB_SSL=true` y `DB_SSL_REJECT_UNAUTHORIZED=true`, con el certificado CA de Supabase en `DB_SSL_CA`.
+- [ ] `TLS_MIN_VERSION=TLSv1.3`.
+- [ ] `JWT_SECRET` nuevo, aleatorio y de al menos 32 caracteres (no el de desarrollo).
+- [ ] TLS de la API: `HTTPS_CERT_PATH`/`HTTPS_KEY_PATH` con un certificado real, o `TRUST_PROXY=true` detrás de un proxy TLS 1.3.
+- [ ] `CORS_ORIGINS` con el dominio real del frontend y nada más.
+- [ ] `DB_POOL_MAX` coherente con el límite de conexiones del pooler de Supabase (la API y el cron cuentan por separado).
+
+**Servicios externos**
+
+- [ ] SMTP real (`SMTP_*`) y remitente (`CORREO_REMITENTE`); probado el envío de una cotización.
+- [ ] APIs reales del Ministerio de Comercio y de redes sociales, con su credencial. **Confirmar que su formato de respuesta coincide con el que asumen los adaptadores** (está descrito al inicio de `MinisterioComercioAdapter.js` y `RedesSocialesAdapter.js`).
+- [ ] Sin las variables del simulador (`http://127.0.0.1:4010`); `scripts/mockServicios.js` no se usa en producción.
+
+**Negocio**
+
+- [ ] Rangos de `rangos_validacion_cotizacion` confirmados con el área de compras (los iniciales son una propuesta).
+- [ ] Catálogos, usuarios y reglas cargados. El Administrador y los usuarios se crean con contraseñas robustas propias (no las de los ejemplos de esta documentación).
+- [ ] Decidido si se admite cotizar solicitudes `EN TRÁMITE` (`estados.js`).
+
+**Operación**
+
+- [ ] Una sola instancia del contenedor `cron`.
+- [ ] Respaldo de Supabase verificado según el plan contratado.
+- [ ] `docker compose ps` con ambos servicios `healthy`.
+- [ ] Alguien responsable de revisar los logs de errores y los eventos `FALLIDO`.
+
+## Problemas frecuentes en el despliegue
+
+| Síntoma | Causa probable |
 |---|---|
-| Catálogos y reglas | `punto`, `mesa`, `categoria`, `marca`, `unidad_medida`, `producto`, `proveedor`, `parametro` |
-| Seguridad | `usuario` |
-| Cocina | `plato`, `plato_ingrediente`, `pedido`, `pedido_detalle` |
-| Inventario | `inventario`, `movimiento_inventario`, `alarma` |
-| Compras | `solicitud_alimentos`, `detalle_solicitud`, `cotizacion`, `cotizacion_detalle`, `orden_compra` |
-| Analítica y avisos | `tendencia`, `promocion`, `notificacion` |
-| Auditoría y eventos | `auditoria`, `log_error`, `outbox`, `evento_procesado` |
-
-Garantías que da la base de datos: `auditoria` y `log_error` no admiten `UPDATE` ni `DELETE` (triggers); una sola alarma activa por producto y punto (índice único parcial); el inventario no puede quedar negativo; los consecutivos de solicitudes, cotizaciones y órdenes salen de secuencias. Todas las tablas tienen la seguridad a nivel de fila activada, sin políticas: la API se conecta con credenciales propias y la clave pública de Supabase no puede leerlas.
-
-## Seguridad
-
-| Medida | Dónde |
-|---|---|
-| TLS 1.3 hacia la base de datos, el correo y los servicios externos; HTTPS propio con TLS 1.3 o proxy TLS delante de la API | `env.js`, adaptadores, `app.js` |
-| Contraseñas con bcrypt, con un tope de cálculos simultáneos (procesadores menos uno) | `PasswordHasher.js` |
-| JWT firmado de vida corta, con renovación y duración máxima de sesión | `TokenService.js`, `AuthService.js` |
-| Roles verificados en la fachada y otra vez en cada módulo | `operaciones.js`, módulos |
-| Bloqueo de cuenta tras intentos fallidos y límite por IP en el inicio de sesión | `AuthService.js`, `httpSecurity.js` |
-| Auditoría inmutable de acciones, accesos y denegaciones | `AuditoriaService`, triggers |
-| Valores de cotizaciones y órdenes visibles solo para el área de compras | Roles, tablero y auditoría sin montos |
-| Sin SQL construido con datos del usuario: parámetros y listas blancas | Repositorios, `CatalogosDefinicion.js` |
-| Cuerpo máximo de 100 KB, CORS por lista, cabeceras con Helmet | `httpSecurity.js`, `app.js` |
-| Contenedores sin root, sistema de archivos de solo lectura y sin capacidades | `Dockerfile.*`, `docker-compose.yml` |
-
-## Decisiones de diseño
-
-| Decisión | Motivo |
-|---|---|
-| SQL directo con `pg` y no `supabase-js` | El Outbox necesita transacciones de varias sentencias, que PostgREST no ofrece |
-| JWT sin estado con renovación | Cumple la expiración por inactividad sin tabla de sesiones; a cambio, cerrar sesión no invalida el token en el servidor |
-| Alarmas por consulta (sondeo) y no en tiempo real | Supabase Realtime exige un JWT propio de Supabase, que este sistema no usa |
-| Entrega de eventos "al menos una vez" con idempotencia por manejador | Un fallo de correo o del Ministerio se reintenta sin duplicar efectos |
-| Catálogos como lista blanca (`CatalogosDefinicion.js`) | Un solo servicio genérico sin construir SQL con nombres que vengan del cliente |
-| Cron en un contenedor aparte, con bloqueo asesor de PostgreSQL | Que escalar la API no duplique procesos programados, y que dos cron no ejecuten lo mismo |
-| La unidad de un producto no cambia | Inventario, ingredientes y solicitudes dependen de ella |
-| Comparar la cotización con el subtotal sugerido de lo que cubre | Cotizaciones parciales se juzgan bien; coincide con el total si cubre todo |
-
-## Pruebas y CI
-
-`npm test` ejecuta más de 130 pruebas con su propia base PostgreSQL temporal (nunca Supabase): casos de uso, seguridad de la API (incluido TLS 1.3 real), envío real por SMTP, cron y la sincronía de esta documentación con el código. El CI de GitHub las repite contra PostgreSQL 16 y construye las dos imágenes Docker en cada cambio.
-
-## Limitaciones conocidas
-
-- Cerrar sesión no invalida el token en el servidor; dura hasta su vencimiento.
-- No existe una ruta para que un usuario cambie su contraseña ni para restablecerla (el SRS no lo contempla).
-- Las alarmas no se empujan: la aplicación debe consultarlas.
-- Los adaptadores del Ministerio de Comercio y de redes sociales asumen un formato de respuesta (descrito en cada adaptador) que debe confirmarse con las APIs reales.
-- Este repositorio es solo el backend: no incluye el frontend.
+| La API no arranca en producción y menciona `HTTPS_CERT_PATH` | Falta TLS: configure el certificado o `TRUST_PROXY=true` |
+| La API no arranca y menciona `DB_SSL` o `TLS_MIN_VERSION` | En producción deben ser `true` y `TLSv1.3` |
+| `docker compose` dice que falta `.env` | Cree el archivo a partir de `.env.example` |
+| `self-signed certificate in certificate chain` | Falta `DB_SSL_CA` con el certificado de Supabase |
+| Errores de `connection timeout` a la base de datos | Se usa la conexión directa de Supabase (IPv6) en lugar del Session pooler, o se superó el límite de conexiones |
+| Las cotizaciones responden 503 | El correo no puede enviarse: revise `SMTP_*` y el log de errores |
+| `valorTotalSugerido` queda vacío | El servicio del Ministerio no responde o no devuelve el precio de algún producto: revise el log de errores |
+| El cron no ejecuta el descuento | Revise `docker compose logs cron`; el `HEALTHCHECK` marca el contenedor no saludable si el proceso dejó de latir |
