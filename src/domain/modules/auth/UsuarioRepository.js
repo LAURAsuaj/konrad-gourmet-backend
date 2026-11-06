@@ -38,6 +38,29 @@ export class UsuarioRepository {
     await db.query('UPDATE usuario SET intentos_fallidos = 0 WHERE id = $1', [id]);
   }
 
+  /** Credenciales y estado de la cuenta (incluye el hash: solo para verificar contraseñas). */
+  async obtenerCredenciales(id, db) {
+    const { rows } = await db.query(
+      'SELECT id, password_hash, activo, bloqueado, intentos_fallidos FROM usuario WHERE id = $1',
+      [id]
+    );
+    return rows[0] ?? null;
+  }
+
+  /** Guarda un hash nuevo y reinicia los intentos; con `desbloquear` también habilita la cuenta. */
+  async actualizarPassword(id, passwordHash, db, { desbloquear = false } = {}) {
+    const { rows } = await db.query(
+      `UPDATE usuario
+          SET password_hash = $2,
+              intentos_fallidos = 0,
+              bloqueado = CASE WHEN $3::boolean THEN false ELSE bloqueado END
+        WHERE id = $1
+        RETURNING ${COLUMNAS_PUBLICAS}`,
+      [id, passwordHash, desbloquear]
+    );
+    return rows[0] ?? null;
+  }
+
   async crear({ nombre, correo, passwordHash, rol, puntoId }, db) {
     const { rows } = await db.query(
       `INSERT INTO usuario (nombre, correo, password_hash, rol, punto_id)

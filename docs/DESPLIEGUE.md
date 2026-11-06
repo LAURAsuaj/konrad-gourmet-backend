@@ -81,7 +81,7 @@ UPDATE outbox SET estado = 'PENDIENTE', intentos = 0, disponible_en = now(), blo
 ### Rotación de secretos
 
 - Cambiar `JWT_SECRET` invalida todas las sesiones abiertas: los usuarios deben iniciar sesión de nuevo.
-- Las contraseñas de los usuarios no dependen de `JWT_SECRET`. **Hoy no existe una ruta para cambiar la contraseña de un usuario** (el SRS no la contempla): por eso conviene crear el Administrador inicial y los usuarios con contraseñas robustas desde el principio.
+- Las contraseñas de los usuarios no dependen de `JWT_SECRET`. Cada usuario cambia la suya con `POST /api/v1/auth/cambiar-password` y el Administrador restablece la de cualquiera con `POST /api/v1/usuarios/:id/restablecer-password`; las sesiones abiertas siguen vigentes hasta vencer.
 - Tras rotar la clave `service_role`, la contraseña de la base de datos o las credenciales SMTP, actualice el `.env` y reinicie.
 
 ### Respaldo y recuperación
@@ -120,7 +120,7 @@ Marque cada punto antes de salir:
 **Negocio**
 
 - [ ] Rangos de `rangos_validacion_cotizacion` confirmados con el área de compras (los iniciales son una propuesta).
-- [ ] Catálogos, usuarios y reglas cargados. El Administrador y los usuarios se crean con contraseñas robustas propias (no las de los ejemplos de esta documentación).
+- [ ] Catálogos, usuarios y reglas cargados. El Administrador y los usuarios se crean con contraseñas robustas propias (no las de los ejemplos de esta documentación), y cada usuario cambia la inicial que se le entregó.
 - [ ] Decidido si se admite cotizar solicitudes `EN TRÁMITE` (`estados.js`).
 
 **Operación**
@@ -139,6 +139,7 @@ Marque cada punto antes de salir:
 | `docker compose` dice que falta `.env` | Cree el archivo a partir de `.env.example` |
 | `self-signed certificate in certificate chain` | Falta `DB_SSL_CA` con el certificado de Supabase |
 | Errores de `connection timeout` a la base de datos | Se usa la conexión directa de Supabase (IPv6) en lugar del Session pooler, o se superó el límite de conexiones |
+| Respuestas 503 intermitentes con la cabecera `Retry-After` | La API no logra conectarse a la base de datos (tiempo de espera o límite de conexiones del pooler): revise el estado de Supabase y `DB_POOL_MAX` |
 | Las cotizaciones responden 503 | El correo no puede enviarse: revise `SMTP_*` y el log de errores |
 | `valorTotalSugerido` queda vacío | El servicio del Ministerio no responde o no devuelve el precio de algún producto: revise el log de errores |
 | El cron no ejecuta el descuento | Revise `docker compose logs cron`; el `HEALTHCHECK` marca el contenedor no saludable si el proceso dejó de latir |

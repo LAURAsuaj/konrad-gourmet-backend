@@ -1,6 +1,6 @@
 # Referencia de la API
 
-API REST de Konrad Gourmet. Esta referencia describe las **39 rutas** de `/api/v1` y la ruta de salud, con ejemplos tomados de respuestas reales del sistema.
+API REST de Konrad Gourmet. Esta referencia describe las **42 rutas** de `/api/v1` y la ruta de salud, con ejemplos tomados de respuestas reales del sistema.
 
 > Los ejemplos usan datos de prueba. Los identificadores (`<id>`) son UUID que entrega la propia API. Las listas se muestran abreviadas: la respuesta real puede traer más elementos.
 
@@ -42,7 +42,7 @@ API REST de Konrad Gourmet. Esta referencia describe las **39 rutas** de `/api/v
 | 426 | `TLS_REQUERIDO` | En producción, petición sin TLS |
 | 429 | `DEMASIADOS_INTENTOS` | Límite de intentos de inicio de sesión (cabecera `Retry-After`) |
 | 500 | `ERROR_INTERNO` | Error inesperado; el detalle queda en el log, no en la respuesta |
-| 503 | `SERVICIO_NO_DISPONIBLE` | Un servicio externo (por ejemplo el correo) no respondió |
+| 503 | `SERVICIO_NO_DISPONIBLE` | Un servicio externo (por ejemplo el correo) no respondió, o la base de datos no está disponible temporalmente (cabecera `Retry-After`: reintente en unos segundos) |
 
 Las respuestas de error ejemplo, tomadas del sistema:
 
@@ -107,9 +107,11 @@ Los valores de cotizaciones y órdenes de compra solo los ven los roles del áre
 | `GET /api/v1/auth/sesion` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | `POST /api/v1/auth/refrescar` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | `POST /api/v1/auth/logout` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| `POST /api/v1/auth/cambiar-password` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | `POST /api/v1/usuarios` | — | — | — | — | — | ✔ |
 | `GET /api/v1/usuarios` | — | — | — | — | — | ✔ |
 | `POST /api/v1/usuarios/:id/desbloquear` | — | — | — | — | — | ✔ |
+| `POST /api/v1/usuarios/:id/restablecer-password` | — | — | — | — | — | ✔ |
 | `GET /api/v1/catalogos` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | `GET /api/v1/catalogos/:catalogo` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | `POST /api/v1/catalogos/:catalogo` | — | — | — | — | — | ✔ |
@@ -125,6 +127,7 @@ Los valores de cotizaciones y órdenes de compra solo los ven los roles del áre
 | `PUT /api/v1/inventario` | ✔ | — | — | — | — | ✔ |
 | `GET /api/v1/inventario` | ✔ | — | — | — | — | ✔ |
 | `GET /api/v1/inventario/alarmas` | ✔ | — | — | — | — | — |
+| `GET /api/v1/notificaciones` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | `POST /api/v1/solicitudes` | ✔ | — | — | — | — | — |
 | `GET /api/v1/solicitudes` | — | — | ✔ | ✔ | — | — |
 | `GET /api/v1/solicitudes/:id` | — | — | ✔ | ✔ | — | — |
@@ -278,6 +281,38 @@ Cierra la sesión y deja constancia en la auditoría.
 
 **Errores frecuentes:** 401 `NO_AUTENTICADO`
 
+### POST /api/v1/auth/cambiar-password
+
+El propio usuario cambia su contraseña.
+
+**Roles:** Cualquier usuario autenticado
+
+**Cuerpo**
+```json
+{
+  "passwordActual": "Clave1234",
+  "passwordNueva": "NuevaClave99"
+}
+```
+
+**Respuesta 200**
+```json
+{
+  "datos": {
+    "id": "696e8b40-4fb6-4384-b835-e1b4969aac41",
+    "cambiada": true
+  }
+}
+```
+
+- Exige la contraseña actual: con solo un token robado no se puede cambiar.
+- La nueva debe cumplir las mismas reglas que al crear un usuario (mínimo 8 caracteres, letras y números, máximo 72 bytes) y ser distinta de la actual.
+- Una contraseña actual incorrecta cuenta como intento fallido: al llegar al máximo (`max_intentos_login`) la cuenta se bloquea hasta que un Administrador la habilite.
+- Queda auditado (`UPDATE` sobre `usuario`) sin guardar ninguna contraseña.
+- Las sesiones ya abiertas siguen vigentes hasta que venza su token (30 minutos por defecto).
+
+**Errores frecuentes:** 400 `VALIDACION` (contraseña actual incorrecta o nueva inválida), 423 `CUENTA_BLOQUEADA`, 401 `NO_AUTENTICADO`
+
 ## Usuarios (CU-01)
 
 ### POST /api/v1/usuarios
@@ -387,6 +422,42 @@ Habilita una cuenta bloqueada por intentos fallidos y reinicia su contador.
 ```
 
 **Errores frecuentes:** 404 `NO_ENCONTRADO`
+
+### POST /api/v1/usuarios/:id/restablecer-password
+
+El Administrador fija una contraseña nueva a otro usuario, por ejemplo porque la olvidó.
+
+**Roles:** `ADMINISTRADOR`
+
+**Parámetros**
+
+| Nombre | Dónde | Descripción |
+|---|---|---|
+| `id` | ruta | Id del usuario |
+
+**Cuerpo**
+```json
+{
+  "passwordNueva": "Restablecida77"
+}
+```
+
+**Respuesta 200**
+```json
+{
+  "datos": {
+    "id": "0d60b08e-bf6f-4fbc-b78b-2eb832ec98a0",
+    "restablecida": true
+  }
+}
+```
+
+- La contraseña nueva cumple las mismas reglas que al crear un usuario.
+- **También habilita la cuenta** si estaba bloqueada y reinicia el contador de intentos fallidos.
+- No existe recuperación por correo ("olvidé mi contraseña"): la restablece el Administrador y se la entrega al usuario, que debería cambiarla de inmediato con `POST /api/v1/auth/cambiar-password`.
+- Queda auditado sin guardar la contraseña. Las sesiones abiertas siguen vigentes hasta vencer.
+
+**Errores frecuentes:** 400 `VALIDACION`, 403 `PROHIBIDO`, 404 `NO_ENCONTRADO`
 
 ## Parametrización (CU-04)
 
@@ -957,6 +1028,53 @@ Alarmas de stock bajo activas del punto del Jefe de Cocina.
 - Las alarmas **no se empujan en tiempo real**: la aplicación debe consultar esta ruta periódicamente.
 - Una alarma se genera cuando la cantidad baja al 25 % o menos de la de referencia (regla `alarma_porcentaje`) y no se repite mientras siga activa.
 
+## Notificaciones propias (CU-05, CU-07, CU-15)
+
+### GET /api/v1/notificaciones
+
+Notificaciones que el sistema le envió al usuario autenticado, de la más reciente a la más antigua: confirmaciones de solicitud, alarmas de stock y promociones.
+
+**Roles:** Cualquier usuario autenticado
+
+**Parámetros**
+
+| Nombre | Dónde | Descripción |
+|---|---|---|
+| `tipo` | consulta | `CONFIRMACION_SOLICITUD`, `ALARMA_STOCK` o `PROMOCION` |
+| `desde` | consulta | Fecha inicial |
+| `hasta` | consulta | Fecha final |
+| `limite` | consulta | Máximo 200, por defecto 50 |
+| `offset` | consulta | Desplazamiento |
+
+**Respuesta 200**
+```json
+{
+  "datos": {
+    "total": 1,
+    "notificaciones": [
+      {
+        "id": "5b0c2f0e-7c55-4d57-a0a1-0f5e9a6c1d11",
+        "tipo": "ALARMA_STOCK",
+        "asunto": "Alarma de stock bajo: Pollo en Chapinero",
+        "mensaje": "ALARMA DE STOCK BAJO\n\nProducto: Pollo\nCantidad actual: 2 kg (10 % de la cantidad de referencia)\n…",
+        "estado": "ENVIADA",
+        "creadaEn": "2026-11-05T05:03:01.733Z",
+        "enviadaEn": "2026-11-05T05:03:01.790Z"
+      }
+    ]
+  }
+}
+```
+
+- Cada usuario ve **solo las suyas**; un Jefe de Cocina no ve las alarmas de otro punto.
+- `estado`: `ENVIADA` (el correo salió), `FALLIDA` o `CREADA` (aún en proceso).
+- Es la forma de "informar al usuario" dentro de la aplicación, además del correo. Como no se empujan en tiempo real, la aplicación debe consultarla periódicamente.
+- No incluye montos de cotizaciones ni de órdenes de compra.
+- No se registra en la auditoría (se consulta con frecuencia).
+- Sin resultados devuelve `total: 0` y un `mensaje`.
+
+**Errores frecuentes:** 400 `VALIDACION` (tipo o rango de fechas inválido)
+
 ## Solicitudes de alimentos (CU-05, CU-08)
 
 ### POST /api/v1/solicitudes
@@ -1039,6 +1157,20 @@ Lista las solicitudes de todos los puntos con filtros.
         "punto": "Chapinero",
         "solicitante": "Jefe",
         "items": 2,
+        "alimentos": [
+          {
+            "producto": "Arroz",
+            "marca": null,
+            "cantidad": 100,
+            "unidad": "kg"
+          },
+          {
+            "producto": "Pollo",
+            "marca": null,
+            "cantidad": 50,
+            "unidad": "kg"
+          }
+        ],
         "valorTotalSugerido": 1050000
       }
     ]
@@ -1046,6 +1178,7 @@ Lista las solicitudes de todos los puntos con filtros.
 }
 ```
 
+- Cada solicitud trae sus `alimentos` (producto, marca, cantidad y unidad); `items` es solo su cantidad.
 - Sin resultados devuelve `total: 0` y un `mensaje` informativo.
 
 **Errores frecuentes:** 400 `VALIDACION`

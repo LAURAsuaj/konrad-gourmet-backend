@@ -42,11 +42,13 @@ export function crearApiController({ facade, authMiddleware, rbac }) {
 
   ruta('post', '/auth/refrescar', 'sesion.renovar');
   ruta('post', '/auth/logout', 'sesion.cerrar');
+  ruta('post', '/auth/cambiar-password', 'usuarios.cambiarPassword', (req) => req.body);
 
   // ---- Usuarios ----
   ruta('post', '/usuarios', 'usuarios.crear', (req) => req.body, 201);
   ruta('get', '/usuarios', 'usuarios.listar');
   ruta('post', '/usuarios/:id/desbloquear', 'usuarios.desbloquear', conId);
+  ruta('post', '/usuarios/:id/restablecer-password', 'usuarios.restablecerPassword', (req) => ({ id: req.params.id, passwordNueva: req.body?.passwordNueva }));
 
   // ---- Parametrización (CU-04) ----
   ruta('get', '/catalogos', 'catalogos.nombres');
@@ -71,6 +73,9 @@ export function crearApiController({ facade, authMiddleware, rbac }) {
   ruta('put', '/inventario', 'inventario.establecer', (req) => req.body);
   ruta('get', '/inventario', 'inventario.consultar', consulta);
   ruta('get', '/inventario/alarmas', 'inventario.alarmas');
+
+  // ---- Notificaciones propias ----
+  ruta('get', '/notificaciones', 'notificaciones.listarPropias', consulta);
 
   // ---- Solicitudes (CU-05, CU-08) ----
   ruta('post', '/solicitudes', 'solicitudes.registrar', (req) => req.body, 201);

@@ -156,6 +156,14 @@ describe('API HTTP', () => {
       const alarmas = await app.http('GET', '/inventario/alarmas', { token: T.jefe });
       assert.deepEqual(alarmas.json.datos.map((a) => a.producto), ['Pollo']);
       assert.ok(app.falsos.correos.some((c) => c.asunto.startsWith('Alarma de stock bajo')));
+
+      const propias = await app.http('GET', '/notificaciones?tipo=ALARMA_STOCK', { token: T.jefe });
+      assert.equal(propias.estado, 200);
+      assert.equal(propias.json.datos.total, 1);
+      assert.match(propias.json.datos.notificaciones[0].asunto, /Pollo/);
+      assert.equal((await app.http('GET', '/notificaciones', { token: T.mesero })).json.datos.total, 0, 'cada usuario ve solo las suyas');
+      assert.equal((await app.http('GET', '/notificaciones?tipo=INVENTADO', { token: T.jefe })).estado, 400);
+      assert.equal((await app.http('GET', '/notificaciones')).estado, 401);
     });
 
     it('solicitud, valor sugerido, cotización con PDF, valores, validación, orden de compra y tablero', async () => {
@@ -165,7 +173,9 @@ describe('API HTTP', () => {
       assert.equal((await post('solicitudes', { items: [] }, T.jefe)).estado, 400);
       assert.ok(await app.drenado());
       assert.equal((await app.http('GET', `/solicitudes/${sol.json.datos.id}`, { token: T.aux })).json.datos.valorTotalSugerido, 450_000);
-      assert.equal((await app.http('GET', '/solicitudes?estado=PENDIENTE', { token: T.aux })).json.datos.total, 1);
+      const listado = (await app.http('GET', '/solicitudes?estado=PENDIENTE', { token: T.aux })).json.datos;
+      assert.equal(listado.total, 1);
+      assert.deepEqual(listado.solicitudes[0].alimentos, [{ producto: 'Arroz', marca: null, cantidad: 100, unidad: 'kg' }], 'el listado trae los alimentos de cada solicitud');
 
       const cot = await post('cotizaciones', { solicitudId: sol.json.datos.id, proveedorId: ids.prov, plazoMaximo: fechaEnColombia(1) }, T.aux);
       assert.equal(cot.estado, 201);
@@ -243,6 +253,46 @@ describe('API HTTP', () => {
       } finally {
         await new Promise((r) => servidor.close(r));
       }
+    });
+  });
+
+  describe('Errores de conexión con la base de datos', () => {
+    const respuestaFalsa = () => ({ cabeceras: {}, codigo: null, cuerpo: null, headersSent: false, set(k, v) { this.cabeceras[k] = v; return this; }, status(c) { this.codigo = c; return this; }, json(c) { this.cuerpo = c; return this; } });
+    const manejar = async (error) => {
+      const { manejadorErrores } = await import('../src/presentation/middlewares/httpSecurity.js');
+      const registrados = [];
+      const respuesta = respuestaFalsa();
+      manejadorErrores({ error: async (e) => { registrados.push(e.mensaje); } })(error, { method: 'GET', path: '/x' }, respuesta, () => {});
+      await new Promise((resolver) => setTimeout(resolver, 20));
+      return { respuesta, registrados };
+    };
+
+    it('reconoce las caídas y los tiempos de espera de la base de datos, y no confunde otros errores', async () => {
+      const { esErrorDeConexion } = await import('../src/presentation/middlewares/httpSecurity.js');
+      for (const mensaje of ['Connection terminated due to connection timeout', 'timeout exceeded when trying to connect', 'Connection terminated unexpectedly', 'the database system is starting up']) {
+        assert.equal(esErrorDeConexion(new Error(mensaje)), true, mensaje);
+      }
+      for (const code of ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', '57P01', '53300']) {
+        assert.equal(esErrorDeConexion(Object.assign(new Error('x'), { code })), true, code);
+      }
+      for (const otro of [new Error('boom'), Object.assign(new Error('duplicado'), { code: '23505' }), new TypeError('x is not a function'), null]) {
+        assert.equal(esErrorDeConexion(otro), false);
+      }
+    });
+
+    it('responde 503 con Retry-After (no un 500) y registra el motivo', async () => {
+      const { respuesta, registrados } = await manejar(new Error('Connection terminated due to connection timeout'));
+      assert.equal(respuesta.codigo, 503);
+      assert.equal(respuesta.cuerpo.error.codigo, 'SERVICIO_NO_DISPONIBLE');
+      assert.equal(respuesta.cabeceras['Retry-After'], '5');
+      assert.deepEqual(registrados, ['Sin conexión con la base de datos']);
+    });
+
+    it('un error inesperado sigue siendo 500 y no expone detalles', async () => {
+      const { respuesta } = await manejar(new Error('detalle interno secreto'));
+      assert.equal(respuesta.codigo, 500);
+      assert.equal(respuesta.cuerpo.error.codigo, 'ERROR_INTERNO');
+      assert.ok(!JSON.stringify(respuesta.cuerpo).includes('secreto'));
     });
   });
 

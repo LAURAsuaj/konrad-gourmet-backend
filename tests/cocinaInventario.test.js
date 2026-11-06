@@ -122,6 +122,21 @@ describe('Cocina e inventario', () => {
       assert.equal(await codigoDe(() => E('inventario.alarmas', A.mesero, {})), 'PROHIBIDO');
     });
 
+    it('el Jefe ve la alarma en sus notificaciones y cada usuario ve solo las suyas', async () => {
+      const propias = await E('notificaciones.listarPropias', A.jefe, {});
+      assert.equal(propias.total, 1);
+      const [alarma] = propias.notificaciones;
+      assert.equal(alarma.tipo, 'ALARMA_STOCK');
+      assert.equal(alarma.estado, 'ENVIADA');
+      assert.ok(alarma.asunto.includes('Pollo') && alarma.mensaje.includes('Chapinero'));
+      assert.ok(alarma.creadaEn && alarma.enviadaEn);
+      assert.equal((await E('notificaciones.listarPropias', A.jefe2, {})).total, 0, 'el Jefe de otro punto no la ve');
+      assert.equal((await E('notificaciones.listarPropias', A.mesero, {})).total, 0);
+      assert.match((await E('notificaciones.listarPropias', A.jefe, { tipo: 'PROMOCION' })).mensaje, /No tiene notificaciones/);
+      assert.equal(await codigoDe(() => E('notificaciones.listarPropias', A.jefe, { tipo: 'INVENTADO' })), 'VALIDACION');
+      assert.equal(await codigoDe(() => E('notificaciones.listarPropias', A.jefe, { desde: '2026-12-01', hasta: '2026-01-01' })), 'VALIDACION');
+    });
+
     it('si el consumo supera lo disponible el inventario no queda negativo y no se repite la alarma', async () => {
       await pedido(20);
       const r = await app.contenedor.facade.ejecutarProcesoAutomatico('descuento_diario');

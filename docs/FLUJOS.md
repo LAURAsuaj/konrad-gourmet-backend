@@ -16,6 +16,9 @@ Cómo funciona cada proceso del sistema, de principio a fin. Las rutas están en
 - Tras **3 intentos fallidos** (regla `max_intentos_login`) la cuenta se bloquea hasta que el Administrador la habilita (`POST /api/v1/usuarios/:id/desbloquear`).
 - El token dura 30 minutos por defecto. Mientras el usuario esté activo, la aplicación llama a `POST /api/v1/auth/refrescar`; si queda inactivo más que ese tiempo, la sesión expira. A las 12 horas de iniciada hay que volver a entrar.
 - Al renovar se revalida la cuenta: si cambió el rol, se bloqueó o se inactivó, el token nuevo lo refleja o se rechaza.
+- **Cambio de contraseña:** cada usuario cambia la suya con `POST /api/v1/auth/cambiar-password`, indicando la actual. Una actual incorrecta cuenta como intento fallido y puede bloquear la cuenta.
+- **Olvido de contraseña:** no hay recuperación por correo; el Administrador la restablece con `POST /api/v1/usuarios/:id/restablecer-password`, lo que además habilita la cuenta si estaba bloqueada.
+- Cambiar o restablecer una contraseña no cierra las sesiones ya abiertas: sus tokens siguen vigentes hasta vencer.
 - Cerrar sesión (`POST /api/v1/auth/logout`) se audita. El token no se invalida en el servidor: la aplicación debe descartarlo.
 - Cada operación se valida dos veces: en la fachada y dentro del módulo, según el rol. Un intento sin permiso responde 403 y queda auditado como `ACCESO_DENEGADO`.
 
@@ -41,7 +44,7 @@ Reejecutarlo no duplica nada y dos ejecuciones simultáneas procesan cada pedido
 
 - Se genera cuando la cantidad de un producto baja al **25 % o menos** de su cantidad de referencia (regla `alarma_porcentaje`). Se evalúa después del descuento diario y después de cada ajuste manual (`PUT /api/v1/inventario`).
 - No se repite mientras siga activa. Al reabastecer por encima del umbral se cierra y puede volver a generarse.
-- Se avisa por correo a los Jefes de Cocina del punto afectado, con el producto, la cantidad actual y el punto. La aplicación la consulta en `GET /api/v1/inventario/alarmas` (no se empuja en tiempo real).
+- Se avisa por correo a los Jefes de Cocina del punto afectado, con el producto, la cantidad actual y el punto. La aplicación la consulta en `GET /api/v1/inventario/alarmas` (no se empuja en tiempo real) y el aviso también queda en las notificaciones de cada Jefe de Cocina (`GET /api/v1/notificaciones`).
 
 ## Compras: de la solicitud a la orden
 
@@ -80,7 +83,7 @@ stateDiagram-v2
 
 El Jefe de Cocina indica categoría, producto, cantidad, unidad y, opcionalmente, marca. El producto debe pertenecer a la categoría y la unidad debe ser la del producto. La solicitud queda `PENDIENTE` con un consecutivo, y **después de responder** ocurre de forma asíncrona:
 
-- Se envía la confirmación por correo al solicitante.
+- Se envía la confirmación por correo al solicitante, y queda en sus notificaciones (`GET /api/v1/notificaciones`).
 - Se consulta el **precio sugerido** de cada producto al Ministerio de Comercio.
 
 ### Precio sugerido
@@ -144,7 +147,7 @@ Proceso automático (por defecto, los lunes a las 8:00):
 2. Toma los productos más solicitados de los últimos 30 días.
 3. Cruza ambos por nombre: un producto muy solicitado que además es tendencia genera una promoción `COMBINADA` (hasta 5). Si ninguno coincide, se promueven los 3 más solicitados (`MAS_SOLICITADO`). Las tendencias que no corresponden a ningún producto generan hasta 2 promociones `TENDENCIA`.
 4. No repite una misma promoción dentro de 7 días.
-5. Cada promoción se envía por correo a los Jefes de Cocina, y el resultado de cada envío queda registrado (`GET /api/v1/promociones`).
+5. Cada promoción se envía por correo a los Jefes de Cocina (y queda en sus notificaciones), y el resultado de cada envío queda registrado (`GET /api/v1/promociones`).
 
 ## Procesos automáticos
 
@@ -178,6 +181,6 @@ Cada cambio importante guarda su evento **en la misma transacción** (patrón Ou
 ## Qué se audita
 
 - Quedan registradas las acciones de **escritura**, las consultas de información de negocio (solicitudes, cotizaciones, órdenes, inventario, tablero, auditoría), los accesos exitosos y fallidos, los accesos denegados y las ejecuciones de los procesos automáticos.
-- **No** se auditan las listas desplegables (catálogos y menú) ni la renovación de la sesión, por su volumen.
+- **No** se auditan las listas desplegables (catálogos y menú), las notificaciones propias ni la renovación de la sesión, por su volumen.
 - Los registros no se pueden modificar ni eliminar, y nunca contienen contraseñas ni montos de cotizaciones u órdenes.
 - Solo el Administrador consulta la auditoría y los logs de errores.

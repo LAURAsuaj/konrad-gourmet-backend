@@ -80,6 +80,16 @@ describe('Compras', () => {
     });
   });
 
+  describe('Notificaciones de las solicitudes', () => {
+    it('el solicitante ve la confirmación en sus notificaciones y los demás no', async () => {
+      const propias = await E('notificaciones.listarPropias', A.jefe, { tipo: 'CONFIRMACION_SOLICITUD' });
+      assert.ok(propias.total >= 1);
+      assert.ok(propias.notificaciones.some((n) => n.asunto.includes(`N.º ${S1.consecutivo} registrada`) && n.estado === 'ENVIADA'));
+      assert.equal((await E('notificaciones.listarPropias', A.aux, {})).total, 0);
+      assert.equal((await E('notificaciones.listarPropias', A.compras, {})).total, 0);
+    });
+  });
+
   describe('Consulta de solicitudes (CU-08)', () => {
     it('lista las solicitudes de todos los puntos con filtros; sin resultados informa', async () => {
       assert.ok((await E('solicitudes.consultar', A.aux, {})).total >= 1);
@@ -87,6 +97,17 @@ describe('Compras', () => {
       assert.match((await E('solicitudes.consultar', A.aux, { estado: 'EN TRÁMITE' })).mensaje, /Ninguna/);
       assert.equal(await codigoDe(() => E('solicitudes.consultar', A.aux, { desde: '2026-12-01', hasta: '2026-01-01' })), 'VALIDACION');
       assert.equal(await codigoDe(() => E('solicitudes.consultar', A.jefe, {})), 'PROHIBIDO');
+    });
+
+    it('el listado trae los alimentos de cada solicitud, con marca, cantidad y unidad', async () => {
+      const lista = await E('solicitudes.consultar', A.aux, {});
+      const s1 = lista.solicitudes.find((s) => s.id === S1.id);
+      assert.equal(s1.items, 2);
+      assert.deepEqual(s1.alimentos, [
+        { producto: 'Arroz', marca: 'Diana', cantidad: 100, unidad: 'kg' },
+        { producto: 'Pollo', marca: null, cantidad: 50, unidad: 'kg' },
+      ]);
+      assert.ok(lista.solicitudes.every((s) => Array.isArray(s.alimentos) && s.alimentos.length === s.items));
     });
 
     it('muestra el detalle con alimentos y precio sugerido; una solicitud inexistente da NO_ENCONTRADO', async () => {

@@ -93,6 +93,21 @@ export function rutaNoEncontrada(req, res) {
   res.status(404).json({ error: { codigo: 'NO_ENCONTRADO', mensaje: 'La ruta solicitada no existe' } });
 }
 
+const CODIGOS_DE_CONEXION = new Set([
+  'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE',
+  '57P01', '57P02', '57P03', '53300', '08000', '08001', '08003', '08004', '08006',
+]);
+
+/**
+ * Indica si un error se debe a que no hay conexión con la base de datos (caída, tiempo de espera,
+ * reinicio, demasiadas conexiones). Son fallos temporales: el cliente debe reintentar, no es un error del sistema.
+ */
+export function esErrorDeConexion(error) {
+  if (!error) return false;
+  if (CODIGOS_DE_CONEXION.has(error.code)) return true;
+  return /connection terminated|connection timeout|timeout exceeded when trying to connect|connection error|database system is (starting up|shutting down)/i.test(error.message ?? '');
+}
+
 /** Traduce errores de negocio a HTTP; los inesperados se registran y no exponen detalles internos. */
 export function manejadorErrores(registrador) {
   // eslint-disable-next-line no-unused-vars
@@ -109,6 +124,17 @@ export function manejadorErrores(registrador) {
     }
     if (error.type === 'entity.too.large') {
       res.status(413).json({ error: { codigo: 'CUERPO_DEMASIADO_GRANDE', mensaje: 'El cuerpo de la petición supera el tamaño permitido' } });
+      return;
+    }
+    if (esErrorDeConexion(error)) {
+      registrador
+        .error({ modulo: 'api', mensaje: 'Sin conexión con la base de datos', detalle: { ruta: `${req.method} ${req.path}` }, error })
+        .finally(() => {
+          if (!res.headersSent) {
+            res.set('Retry-After', '5');
+            res.status(503).json({ error: { codigo: 'SERVICIO_NO_DISPONIBLE', mensaje: 'El servicio no está disponible temporalmente; intente de nuevo en unos segundos' } });
+          }
+        });
       return;
     }
     registrador

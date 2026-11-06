@@ -8,9 +8,9 @@ Backend del sistema **Konrad Gourmet**: gestión de cocina, inventario y compras
 
 | Área | Funcionalidad |
 |---|---|
-| **Seguridad** | Inicio de sesión con roles, bloqueo de cuentas, renovación de sesión, auditoría inmutable de acciones y accesos |
+| **Seguridad** | Inicio de sesión con roles, bloqueo de cuentas, renovación de sesión, cambio y restablecimiento de contraseña, auditoría inmutable de acciones y accesos |
 | **Cocina** | Menú por punto con ingredientes, pedidos por mesa |
-| **Inventario** | Descuento diario automático según lo vendido y alarmas de stock bajo (≤ 25 %) con aviso por correo |
+| **Inventario** | Descuento diario automático según lo vendido y alarmas de stock bajo (≤ 25 %) con aviso por correo y en las notificaciones del usuario |
 | **Compras** | Solicitudes de alimentos, precio sugerido del Ministerio de Comercio, cotizaciones a proveedores (con PDF por correo), validación automática por rangos y órdenes de compra |
 | **Analítica** | Tablero de control (producto y punto más demandados, mejor proveedor) y promociones por tendencias en redes sociales |
 | **Parametrización** | Catálogos y reglas del sistema editables por el Administrador sin reiniciar |
@@ -90,7 +90,7 @@ docs/                Documentación
 |---|---|
 | [Instalación](docs/INSTALACION.md) | Cómo poner el proyecto a funcionar paso a paso |
 | [Configuración](docs/CONFIGURACION.md) | Variables de entorno, reglas del sistema y catálogos |
-| [Referencia de la API](docs/API.md) | Las 39 rutas, sus permisos y ejemplos reales |
+| [Referencia de la API](docs/API.md) | Las 42 rutas, sus permisos y ejemplos reales |
 | [Flujos de negocio](docs/FLUJOS.md) | Cómo funcionan cocina, inventario, compras y procesos automáticos |
 | [Arquitectura](docs/ARQUITECTURA.md) | Capas, patrones, eventos, modelo de datos y decisiones de diseño |
 | [Despliegue y operación](docs/DESPLIEGUE.md) | Docker, TLS, lista de verificación para producción y resolución de problemas |

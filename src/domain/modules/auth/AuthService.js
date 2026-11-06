@@ -151,6 +151,42 @@ export class AuthService {
     return this.#presentar(usuario);
   }
 
+  /**
+   * El propio usuario cambia su contraseña. Exige la actual: un token robado no basta. Una contraseña
+   * actual incorrecta cuenta como intento fallido y, al llegar al máximo, bloquea la cuenta.
+   * Los tokens ya emitidos siguen vigentes hasta vencer (la sesión no tiene estado en el servidor).
+   */
+  async cambiarPassword(actor, { passwordActual, passwordNueva } = {}) {
+    if (!actor?.id) throw new ErrorNoAutenticado();
+    if (typeof passwordActual !== 'string' || !passwordActual) throw new ErrorValidacion('Debe indicar la contraseña actual');
+    this.#validarPassword(passwordNueva);
+
+    const cuenta = await this.#usuarios.obtenerCredenciales(actor.id, this.#db);
+    if (!cuenta || !cuenta.activo || cuenta.bloqueado) {
+      throw new ErrorNoAutenticado('La sesión ya no es válida; inicie sesión nuevamente');
+    }
+    if (!(await this.#hasher.comparar(passwordActual, cuenta.password_hash))) {
+      const maximo = await this.#parametros.obtenerNumero('max_intentos_login', this.#db, 3);
+      const estado = await this.#usuarios.registrarFallo(cuenta.id, maximo, this.#db);
+      if (estado.bloqueado) throw new ErrorCuentaBloqueada({ usuarioId: cuenta.id });
+      throw new ErrorValidacion('La contraseña actual no es correcta');
+    }
+    if (passwordNueva === passwordActual) throw new ErrorValidacion('La contraseña nueva debe ser distinta de la actual');
+
+    await this.#usuarios.actualizarPassword(cuenta.id, await this.#hasher.hash(passwordNueva), this.#db);
+    return { id: cuenta.id, cambiada: true };
+  }
+
+  /** El Administrador fija una contraseña nueva a otro usuario (olvido) y habilita su cuenta si estaba bloqueada. */
+  async restablecerPassword(actor, { id, passwordNueva } = {}) {
+    exigirRol(actor, [ROLES.ADMINISTRADOR]);
+    if (!esUuid(id)) throw new ErrorValidacion('El usuario no es un identificador válido');
+    this.#validarPassword(passwordNueva);
+    const usuario = await this.#usuarios.actualizarPassword(id, await this.#hasher.hash(passwordNueva), this.#db, { desbloquear: true });
+    if (!usuario) throw new ErrorNoEncontrado('El usuario no existe');
+    return { id: usuario.id, restablecida: true };
+  }
+
   async listarUsuarios(actor) {
     exigirRol(actor, [ROLES.ADMINISTRADOR]);
     return (await this.#usuarios.listar(this.#db)).map((u) => this.#presentar(u));

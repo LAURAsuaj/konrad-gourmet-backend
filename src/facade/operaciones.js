@@ -35,6 +35,13 @@ export const OPERACIONES = Object.freeze({
     auditoria: (r) => ({ entidadId: r.usuarioId }),
   },
 
+  // ---- Notificaciones propias (CU-05, CU-07, CU-15) ----
+  // Se consultan con frecuencia (la aplicación las revisa periódicamente): no se auditan.
+  'notificaciones.listarPropias': {
+    roles: TODOS, accion: 'READ', entidad: 'notificacion', auditar: false,
+    ejecutar: ({ m, actor, datos }) => m.notificaciones.listarPropias(actor, datos),
+  },
+
   // ---- Usuarios (CU-01) ----
   'usuarios.crear': {
     roles: ADMIN, accion: 'CREATE', entidad: 'usuario',
@@ -44,6 +51,16 @@ export const OPERACIONES = Object.freeze({
   'usuarios.listar': {
     roles: ADMIN, accion: 'READ', entidad: 'usuario',
     ejecutar: ({ m, actor }) => m.auth.listarUsuarios(actor),
+  },
+  'usuarios.cambiarPassword': {
+    roles: TODOS, accion: 'UPDATE', entidad: 'usuario',
+    ejecutar: ({ m, actor, datos }) => m.auth.cambiarPassword(actor, datos),
+    auditoria: (r) => ({ entidadId: r.id }),
+  },
+  'usuarios.restablecerPassword': {
+    roles: ADMIN, accion: 'UPDATE', entidad: 'usuario',
+    ejecutar: ({ m, actor, datos }) => m.auth.restablecerPassword(actor, datos),
+    auditoria: (r) => ({ entidadId: r.id }),
   },
   'usuarios.desbloquear': {
     roles: ADMIN, accion: 'UPDATE', entidad: 'usuario',

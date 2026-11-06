@@ -92,6 +92,91 @@ describe('Autenticación (CU-01)', () => {
     assert.equal(await codigoDe(() => app.facade.iniciarSesion({ correo: 'antiguo@kg.co', password: 'Clave1234' })), 'SIN_ERROR');
   });
 
+  describe('Cambio y restablecimiento de contraseña', () => {
+    const entrar = (correo, password) => codigoDe(() => app.facade.iniciarSesion({ correo, password }));
+    const idDe = async (correo) => (await app.q('SELECT id FROM usuario WHERE correo = $1', [correo]))[0].id;
+    const cambiar = (actor, datos) => codigoDe(() => app.facade.ejecutar('usuarios.cambiarPassword', actor, datos));
+
+    it('el usuario cambia su contraseña: la nueva funciona, la anterior ya no, y queda auditado sin contraseñas', async () => {
+      await crearUsuario('cambio@kg.co');
+      const actor = await app.actorDe('cambio@kg.co');
+      const r = await app.facade.ejecutar('usuarios.cambiarPassword', actor, { passwordActual: 'Clave1234', passwordNueva: 'NuevaClave99' });
+      assert.deepEqual([r.cambiada, r.id], [true, actor.id]);
+      assert.equal(await entrar('cambio@kg.co', 'NuevaClave99'), 'SIN_ERROR');
+      assert.equal(await entrar('cambio@kg.co', 'Clave1234'), 'CREDENCIALES_INVALIDAS');
+      const [fila] = await app.q("SELECT password_hash FROM usuario WHERE correo = 'cambio@kg.co'");
+      assert.match(fila.password_hash, /^\$2[ab]\$12\$/);
+      assert.equal((await app.q("SELECT 1 FROM auditoria WHERE entidad = 'usuario' AND accion = 'UPDATE' AND entidad_id = $1", [actor.id])).length, 1);
+      const auditoria = JSON.stringify(await app.q('SELECT detalle FROM auditoria'));
+      assert.ok(!auditoria.includes('NuevaClave99') && !auditoria.includes('Clave1234'), 'la auditoría no guarda contraseñas');
+    });
+
+    it('exige la contraseña actual y una nueva robusta y distinta', async () => {
+      await crearUsuario('valida@kg.co');
+      const actor = await app.actorDe('valida@kg.co');
+      assert.equal(await cambiar(actor, { passwordNueva: 'NuevaClave99' }), 'VALIDACION', 'sin la actual');
+      assert.equal(await cambiar(actor, { passwordActual: 'Clave1234' }), 'VALIDACION', 'sin la nueva');
+      assert.equal(await cambiar(actor, { passwordActual: 'Clave1234', passwordNueva: 'corta1' }), 'VALIDACION', 'muy corta');
+      assert.equal(await cambiar(actor, { passwordActual: 'Clave1234', passwordNueva: 'soloLetrasAqui' }), 'VALIDACION', 'sin números');
+      assert.equal(await cambiar(actor, { passwordActual: 'Clave1234', passwordNueva: '123456789012' }), 'VALIDACION', 'sin letras');
+      assert.equal(await cambiar(actor, { passwordActual: 'Clave1234', passwordNueva: 'Clave1234' }), 'VALIDACION', 'igual a la actual');
+      assert.equal(await entrar('valida@kg.co', 'Clave1234'), 'SIN_ERROR', 'ningún intento inválido cambió la contraseña');
+    });
+
+    it('una contraseña actual incorrecta cuenta como intento fallido y, al llegar al máximo, bloquea la cuenta', async () => {
+      await crearUsuario('fuerza@kg.co');
+      const actor = await app.actorDe('fuerza@kg.co');
+      const mala = { passwordActual: 'Equivocada1', passwordNueva: 'NuevaClave99' };
+      assert.deepEqual([await cambiar(actor, mala), await cambiar(actor, mala), await cambiar(actor, mala)], ['VALIDACION', 'VALIDACION', 'CUENTA_BLOQUEADA']);
+      assert.equal(await entrar('fuerza@kg.co', 'Clave1234'), 'CUENTA_BLOQUEADA');
+    });
+
+    it('el Administrador restablece la contraseña de un usuario que la olvidó y le habilita la cuenta', async () => {
+      await crearUsuario('olvido@kg.co');
+      for (let i = 0; i < 3; i++) await entrar('olvido@kg.co', 'Equivocada1');
+      assert.equal(await entrar('olvido@kg.co', 'Clave1234'), 'CUENTA_BLOQUEADA');
+
+      const id = await idDe('olvido@kg.co');
+      const r = await app.facade.ejecutar('usuarios.restablecerPassword', admin, { id, passwordNueva: 'Restablecida77' });
+      assert.deepEqual([r.id, r.restablecida], [id, true]);
+      assert.equal(await entrar('olvido@kg.co', 'Restablecida77'), 'SIN_ERROR');
+      assert.equal(await entrar('olvido@kg.co', 'Clave1234'), 'CREDENCIALES_INVALIDAS');
+      assert.ok(!JSON.stringify(await app.q('SELECT detalle FROM auditoria WHERE entidad_id = $1', [id])).includes('Restablecida77'));
+    });
+
+    it('solo el Administrador restablece; se valida el usuario y la contraseña nueva', async () => {
+      await crearUsuario('sinpermiso@kg.co');
+      const noAdmin = await app.actorDe('sinpermiso@kg.co');
+      const id = await idDe('cambio@kg.co');
+      const restablecer = (actor, datos) => codigoDe(() => app.facade.ejecutar('usuarios.restablecerPassword', actor, datos));
+      assert.equal(await restablecer(noAdmin, { id, passwordNueva: 'Restablecida77' }), 'PROHIBIDO');
+      assert.equal(await restablecer(admin, { id: 'no-es-un-uuid', passwordNueva: 'Restablecida77' }), 'VALIDACION');
+      assert.equal(await restablecer(admin, { id: '00000000-0000-4000-8000-000000000000', passwordNueva: 'Restablecida77' }), 'NO_ENCONTRADO');
+      assert.equal(await restablecer(admin, { id, passwordNueva: 'corta' }), 'VALIDACION');
+    });
+
+    it('por HTTP: POST /auth/cambiar-password y POST /usuarios/:id/restablecer-password', async () => {
+      await crearUsuario('http@kg.co');
+      const token = await app.login('http@kg.co');
+      const buena = { passwordActual: 'Clave1234', passwordNueva: 'NuevaHttp88' };
+      assert.equal((await app.http('POST', '/auth/cambiar-password', { cuerpo: buena })).estado, 401, 'sin token');
+      const mala = await app.http('POST', '/auth/cambiar-password', { token, cuerpo: { passwordActual: 'Mala12345', passwordNueva: 'OtraHttp99' } });
+      assert.equal(mala.estado, 400);
+      assert.equal(mala.json.error.codigo, 'VALIDACION');
+      const ok = await app.http('POST', '/auth/cambiar-password', { token, cuerpo: buena });
+      assert.equal(ok.estado, 200);
+      assert.equal(ok.json.datos.cambiada, true);
+
+      const id = await idDe('http@kg.co');
+      assert.equal((await app.http('POST', `/usuarios/${id}/restablecer-password`, { token, cuerpo: { passwordNueva: 'Restablecida77' } })).estado, 403);
+      const tokenAdmin = await app.login('admin@kg.co', 'Admin12345');
+      const restablecida = await app.http('POST', `/usuarios/${id}/restablecer-password`, { token: tokenAdmin, cuerpo: { passwordNueva: 'Restablecida77' } });
+      assert.equal(restablecida.estado, 200);
+      assert.equal(restablecida.json.datos.restablecida, true);
+      assert.equal(await entrar('http@kg.co', 'Restablecida77'), 'SIN_ERROR');
+    });
+  });
+
   it('100 inicios de sesión simultáneos no congelan la API para los demás (bcrypt nativo)', { timeout: 120000 }, async () => {
     for (let i = 1; i <= 5; i++) await crearUsuario(`carga${i}@kg.co`);
     let activo = true;

@@ -129,6 +129,22 @@ export class SolicitudRepository {
     return rows;
   }
 
+  /** Alimentos de varias solicitudes en una sola consulta (para el listado, CU-08). */
+  async obtenerItemsDeSolicitudes(solicitudIds, db) {
+    if (solicitudIds.length === 0) return [];
+    const { rows } = await db.query(
+      `SELECT d.solicitud_id, pr.nombre AS producto, m.nombre AS marca, d.cantidad, um.abreviatura AS unidad
+         FROM detalle_solicitud d
+         JOIN producto pr ON pr.id = d.producto_id
+         JOIN unidad_medida um ON um.id = d.unidad_id
+         LEFT JOIN marca m ON m.id = d.marca_id
+        WHERE d.solicitud_id = ANY($1::uuid[])
+        ORDER BY pr.nombre, m.nombre NULLS FIRST`,
+      [solicitudIds]
+    );
+    return rows;
+  }
+
   /** Pasa a EN TRÁMITE solo si TODOS sus alimentos ya tienen alguna cotización (CU-09). */
   async pasarAEnTramiteSiCotizada(solicitudId, db) {
     const { rowCount } = await db.query(

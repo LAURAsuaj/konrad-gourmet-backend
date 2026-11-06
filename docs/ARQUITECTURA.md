@@ -109,6 +109,7 @@ Garantías que da la base de datos: `auditoria` y `log_error` no admiten `UPDATE
 | Catálogos como lista blanca (`CatalogosDefinicion.js`) | Un solo servicio genérico sin construir SQL con nombres que vengan del cliente |
 | Cron en un contenedor aparte, con bloqueo asesor de PostgreSQL | Que escalar la API no duplique procesos programados, y que dos cron no ejecuten lo mismo |
 | La unidad de un producto no cambia | Inventario, ingredientes y solicitudes dependen de ella |
+| Errores de conexión con la base de datos como 503 con `Retry-After` | Son fallos temporales: el cliente debe reintentar, no es un error del sistema |
 | Comparar la cotización con el subtotal sugerido de lo que cubre | Cotizaciones parciales se juzgan bien; coincide con el total si cubre todo |
 
 ## Pruebas y CI
@@ -118,7 +119,9 @@ Garantías que da la base de datos: `auditoria` y `log_error` no admiten `UPDATE
 ## Limitaciones conocidas
 
 - Cerrar sesión no invalida el token en el servidor; dura hasta su vencimiento.
-- No existe una ruta para que un usuario cambie su contraseña ni para restablecerla (el SRS no lo contempla).
+- Cambiar o restablecer una contraseña no cierra las sesiones abiertas: sus tokens siguen vigentes hasta vencer.
+- No hay recuperación de contraseña por correo: la restablece el Administrador.
+- Las notificaciones no tienen estado de lectura (leída o no leída): eso requeriría una columna nueva en la base de datos.
 - Las alarmas no se empujan: la aplicación debe consultarlas.
 - Los adaptadores del Ministerio de Comercio y de redes sociales asumen un formato de respuesta (descrito en cada adaptador) que debe confirmarse con las APIs reales.
 - Este repositorio es solo el backend: no incluye el frontend.

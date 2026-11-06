@@ -48,6 +48,7 @@ import { TableroBamService } from './domain/modules/analitica/TableroBamService.
 import { PromocionRepository } from './domain/modules/analitica/PromocionRepository.js';
 import { PromocionService } from './domain/modules/analitica/PromocionService.js';
 import { NotificacionRepository } from './domain/modules/notificaciones/NotificacionRepository.js';
+import { NotificacionService } from './domain/modules/notificaciones/NotificacionService.js';
 import { ManejadorAlarmas } from './domain/events/handlers/ManejadorAlarmas.js';
 import { ManejadorNotificaciones } from './domain/events/handlers/ManejadorNotificaciones.js';
 import { ManejadorPrecioSugerido } from './domain/events/handlers/ManejadorPrecioSugerido.js';
@@ -74,6 +75,7 @@ export function construirContenedor({ servicios = {}, outbox = {} } = {}) {
   const solicitudesRepo = new SolicitudRepository();
   const cotizacionesRepo = new CotizacionRepository();
   const alarmasRepo = new AlarmaRepository();
+  const notificacionesRepo = new NotificacionRepository();
   const analiticaRepo = new AnaliticaRepository();
 
   // Servicios de dominio
@@ -106,15 +108,17 @@ export function construirContenedor({ servicios = {}, outbox = {} } = {}) {
   const precioSugerido = new ManejadorPrecioSugerido({ db, unidadDeTrabajo, solicitudes: solicitudesRepo, precios, registrarEvento, registrador });
   [
     new ManejadorAlarmas({ db, unidadDeTrabajo, alarmas: alarmasRepo, evaluador, parametros, registrador }),
-    new ManejadorNotificaciones({ db, notificaciones: new NotificacionRepository(), correo, registrador }),
+    new ManejadorNotificaciones({ db, notificaciones: notificacionesRepo, correo, registrador }),
     precioSugerido,
     new ManejadorValidacionCotizaciones({ db, unidadDeTrabajo, cotizaciones: cotizacionesRepo, parametros, auditoria, registrador }),
     new ManejadorEstadoSolicitud({ unidadDeTrabajo, solicitudes: solicitudesRepo, auditoria }),
   ].forEach((manejador) => manejador.registrar(busDeEventos));
 
+  const notificaciones = new NotificacionService({ db, notificaciones: notificacionesRepo });
+
   const publicador = new EventOutboxPublisher(outbox);
   const modulos = Object.freeze({
-    auth, auditoria, parametrizacion, menu, pedidos, inventario, solicitudes, cotizaciones, ordenes, tablero, promociones, precioSugerido, parametros,
+    auth, auditoria, parametrizacion, menu, pedidos, inventario, solicitudes, cotizaciones, ordenes, tablero, promociones, notificaciones, precioSugerido, parametros,
   });
   const facade = new SistemaFacade({ modulos, db, registrador });
 

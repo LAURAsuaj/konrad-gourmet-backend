@@ -3,6 +3,8 @@
  * Los datos que necesita cada notificación se leen aquí a partir de los
  * identificadores que viajan en los eventos.
  */
+import { FiltroSql } from '../../consulta.js';
+
 export class NotificacionRepository {
   /** Datos de la solicitud para la confirmación al Jefe de Cocina (CU-05). */
   async obtenerDatosConfirmacion(solicitudId, db) {
@@ -102,6 +104,23 @@ export class NotificacionRepository {
       [tipo, eventoId, usuarioId ?? null]
     );
     return rows[0] ?? null;
+  }
+
+  /** Notificaciones dirigidas a un usuario, de la más reciente a la más antigua (CU-05, CU-07, CU-15). */
+  async listarPorUsuario({ usuarioId, tipo, desde, hasta, limite, offset }, db) {
+    const filtro = new FiltroSql().agregar('usuario_destino_id = $?', usuarioId);
+    if (tipo) filtro.agregar('tipo = $?', tipo);
+    if (desde) filtro.agregar('creada_en >= $?', desde);
+    if (hasta) filtro.agregar('creada_en <= $?', hasta);
+    const { rows } = await db.query(
+      `SELECT id, tipo, asunto, cuerpo, estado, creada_en, enviada_en, COUNT(*) OVER() AS total
+         FROM notificacion
+         ${filtro.where}
+        ORDER BY creada_en DESC, id
+        LIMIT $${filtro.siguiente} OFFSET $${filtro.siguiente + 1}`,
+      [...filtro.valores, limite, offset]
+    );
+    return rows;
   }
 
   async guardar(notificacion, eventoId, db) {

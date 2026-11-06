@@ -101,6 +101,11 @@ export class SolicitudService {
       this.#db
     );
     const total = filas.length > 0 ? Number(filas[0].total) : 0;
+    const alimentosPorSolicitud = new Map();
+    for (const a of await this.#solicitudes.obtenerItemsDeSolicitudes(filas.map((f) => f.id), this.#db)) {
+      if (!alimentosPorSolicitud.has(a.solicitud_id)) alimentosPorSolicitud.set(a.solicitud_id, []);
+      alimentosPorSolicitud.get(a.solicitud_id).push({ producto: a.producto, marca: a.marca, cantidad: Number(a.cantidad), unidad: a.unidad });
+    }
     return {
       total,
       solicitudes: filas.map((f) => ({
@@ -111,6 +116,7 @@ export class SolicitudService {
         punto: f.punto,
         solicitante: f.solicitante,
         items: Number(f.items),
+        alimentos: alimentosPorSolicitud.get(f.id) ?? [],
         valorTotalSugerido: f.valor_total_sugerido === null ? null : Number(f.valor_total_sugerido),
       })),
       ...(total === 0 ? { mensaje: 'Ninguna solicitud cumple los filtros indicados' } : {}),
