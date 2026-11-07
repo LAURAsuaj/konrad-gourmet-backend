@@ -7,6 +7,7 @@ export const MOTIVOS_SIN_PRECIO = Object.freeze({
   SIN_PRECIO: 'SIN_PRECIO', // el servicio no devolvió valor para el producto (CU-10 EXCEP-2)
   VALOR_INVALIDO: 'VALOR_INVALIDO', // el valor devuelto no es numérico o es <= 0 (CU-10 EXCEP-3)
   SERVICIO_NO_DISPONIBLE: 'SERVICIO_NO_DISPONIBLE', // falla temporal: se reintenta después (CU-10 EXCEP-1)
+  UNIDAD_NO_SOPORTADA: 'UNIDAD_NO_SOPORTADA', // el servicio publica precios por kilogramo y la unidad pedida no se puede convertir
 });
 
 export class IPrecioSugeridoService {

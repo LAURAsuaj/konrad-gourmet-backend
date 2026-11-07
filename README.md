@@ -11,7 +11,7 @@ Backend del sistema **Konrad Gourmet**: gestión de cocina, inventario y compras
 | **Seguridad** | Inicio de sesión con roles, bloqueo de cuentas, renovación de sesión, cambio y restablecimiento de contraseña, auditoría inmutable de acciones y accesos |
 | **Cocina** | Menú por punto con ingredientes, pedidos por mesa |
 | **Inventario** | Descuento diario automático según lo vendido y alarmas de stock bajo (≤ 25 %) con aviso por correo y en las notificaciones del usuario |
-| **Compras** | Solicitudes de alimentos, precio sugerido del Ministerio de Comercio, cotizaciones a proveedores (con PDF por correo), validación automática por rangos y órdenes de compra |
+| **Compras** | Solicitudes de alimentos, precio sugerido del Ministerio (servicio SOAP), cotizaciones a proveedores (con PDF por correo), validación automática por rangos y órdenes de compra |
 | **Analítica** | Tablero de control (producto y punto más demandados, mejor proveedor) y promociones por tendencias en redes sociales |
 | **Parametrización** | Catálogos y reglas del sistema editables por el Administrador sin reiniciar |
 
@@ -47,6 +47,7 @@ Compruebe `http://localhost:3000/salud`. La guía completa, con los errores más
 | `npm run start:cron` | Inicia el contenedor de procesos automáticos (descuento diario, tendencias, reintento de precios) |
 | `npm run admin:crear` | Crea el primer Administrador (solo funciona si aún no existe uno) |
 | `npm run db:schema` | Aplica el esquema con `psql` (alternativa al SQL Editor de Supabase) |
+| `npm run sipsa:probar` | Inspecciona el servicio SOAP de precios configurado e informa qué devuelve (real o simulador); con opciones, ver [Instalación](docs/INSTALACION.md) |
 | `npm test` | Ejecuta las pruebas automáticas |
 
 ## Pruebas
@@ -79,7 +80,7 @@ src/
   container.js       Composición de dependencias (compartida por la API y el cron)
   app.js             Arranque de la API
 cron/                Contenedor de procesos automáticos (worker.js y jobs/)
-scripts/             crearAdministrador.js y mockServicios.js (simulador de APIs externas para pruebas)
+scripts/             crearAdministrador.js, mockServicios.js (simulador de las APIs externas) y probarSipsa.js
 tests/               Pruebas automáticas
 docs/                Documentación
 ```

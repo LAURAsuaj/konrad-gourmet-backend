@@ -54,7 +54,7 @@ Genere el `JWT_SECRET` con:
 node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 ```
 
-`DB_SSL_REJECT_UNAUTHORIZED=false` es un atajo **solo para desarrollo**: la conexión sigue cifrada, pero no se verifica la identidad del servidor. Para verificarla, descargue el certificado en Database Settings → SSL Configuration, conviértalo a una sola línea (cada salto de línea por `\n`) y póngalo en `DB_SSL_CA`, quitando la línea anterior. Todas las variables están descritas en [Configuración](CONFIGURACION.md).
+`DB_SSL_REJECT_UNAUTHORIZED=false` es un atajo **solo para desarrollo**: la conexión sigue cifrada, pero no se verifica la identidad del servidor. Para verificarla, descargue el certificado en Database Settings → SSL Configuration, conviértalo a una sola línea (cada salto de línea por `\n`) y póngalo en `DB_SSL_CA`, **quitando la línea `DB_SSL_REJECT_UNAUTHORIZED=false`** (o poniéndola en `true`). También puede pegarlo en varias líneas **entre comillas dobles**; sin comillas, el `.env` solo lee la primera línea del certificado y la conexión falla. Todas las variables están descritas en [Configuración](CONFIGURACION.md).
 
 ## 5. Crear las tablas
 
@@ -122,7 +122,7 @@ Cada comando imprime lo que creó, con su `id`. El resto de las rutas está en l
 
 Parte del flujo depende de servicios externos. Sin ellos funciona el login, los catálogos, el menú, los pedidos, el inventario y las alarmas (el aviso por correo fallará y se reintentará), pero **no** se pueden generar cotizaciones (exigen enviar el correo) ni clasificarlas (exigen el precio sugerido).
 
-**Precio sugerido y tendencias: simulador local.** En una terminal aparte:
+**Precio sugerido (SOAP) y tendencias: simulador local.** En una terminal aparte:
 
 ```bash
 node scripts/mockServicios.js
@@ -131,13 +131,24 @@ node scripts/mockServicios.js
 y agregue al `.env` (use `127.0.0.1`, no `localhost`), reiniciando la API después:
 
 ```env
-MINCOMERCIO_API_URL=http://127.0.0.1:4010
-MINCOMERCIO_API_KEY=clave-de-prueba
+MINCOMERCIO_API_URL=http://127.0.0.1:4010/sipsaWS/SrvSipsaUpraBeanService
 REDES_API_URL=http://127.0.0.1:4010
 REDES_API_TOKEN=token-de-prueba
 ```
 
-El simulador responde Arroz 4.500, Pollo 12.000, Papa 3.200, Carne 28.000 y Leche 4.200; cualquier otro producto recibe un precio estable calculado de su nombre; un nombre que contenga `sinprecio` responde 404. Solo sirve para desarrollo.
+El simulador imita al servicio SOAP de SIPSA (DANE): publica su WSDL en la misma dirección con `?WSDL` y responde la operación `promediosSipsaCiudad` con 22 productos de nombres al estilo SIPSA en 4 ciudades. Pedir `Arroz` devuelve 4.500 (promedio de «Arroz de primera» y «Arroz segunda»), `Pollo` 12.000, `Papa` 3.200 y `Carne` 28.000, por kilogramo. Un producto que no esté en su lista (por ejemplo `Chocolate`) no tiene precio, como pasaría con el servicio real. Solo sirve para desarrollo.
+
+**Comprobar el servicio de precios.** Con la URL configurada, este comando inspecciona el servicio sin descargar respuestas gigantes: lee su definición (XSD) para mostrar los parámetros de entrada, analiza el principio de la respuesta (registros, fechas, ciudades, productos) y, si la respuesta es pequeña, consulta el precio de algunos productos con las mismas clases del sistema:
+
+```bash
+node scripts/probarSipsa.js
+node scripts/probarSipsa.js Arroz Pollo Yuca
+node scripts/probarSipsa.js --crudo
+```
+
+`--crudo` muestra además el principio de la respuesta SOAP sin interpretar; `--operacion=<nombre>` inspecciona otra operación del servicio; `--completo` fuerza la consulta completa aunque la respuesta sea grande (límite de 20 MB). Ejecute el script directamente con `node`: en PowerShell, `npm run sipsa:probar -- --crudo` pierde las opciones.
+
+**Servicio real del DANE (opcional).** Su WSDL está en `http://appweb.dane.gov.co/sipsaWS/SrvSipsaUpraBeanService?WSDL`. Pruebe primero con `https://` en lugar de `http://` en `MINCOMERCIO_API_URL`; si solo responde por `http://`, agregue `MINCOMERCIO_PERMITIR_HTTP=true` y documente la excepción (ver [Configuración](CONFIGURACION.md#ministerio-de-comercio-servicio-soap-de-precios-precio-sugerido)). Sus precios son mayoristas agrícolas por kilogramo y no incluyen todos los productos de un restaurante: los que no existan quedan sin precio sugerido.
 
 **Correo: buzón de pruebas.** Cree una cuenta gratuita en <https://ethereal.email> (recibe los correos y no los entrega a nadie) y complete:
 
@@ -165,7 +176,7 @@ Tarda unos 2 minutos. Use una terminal normal (no de administrador).
 | `Invalid supabaseUrl: Must be a valid HTTP or HTTPS URL` | `SUPABASE_URL` no empieza por `https://` |
 | `password authentication failed for user "postgres"` | Con el pooler el usuario es `postgres.PROYECTO`, no `postgres`; o la contraseña no coincide. Compruebe también que `DATABASE_URL` aparece una sola vez en el `.env` |
 | `Connection terminated due to connection timeout`, `ENETUNREACH` o `ENOTFOUND` | Está usando la conexión directa (solo IPv6). Cambie a la cadena del Session pooler |
-| `self-signed certificate in certificate chain` | Entregue el certificado en `DB_SSL_CA`, o use `DB_SSL_REJECT_UNAUTHORIZED=false` solo en desarrollo |
+| `self-signed certificate in certificate chain` | Falta el certificado en `DB_SSL_CA`, o está mal pegado (en varias líneas **sin comillas**), o no es el de su proyecto. En desarrollo puede usar `DB_SSL_REJECT_UNAUTHORIZED=false` |
 | `tlsv1 alert protocol version` | Un servicio local no admite TLS 1.3: ponga `TLS_MIN_VERSION=TLSv1.2` solo en desarrollo |
 | `relation "usuario" does not exist` | No se ejecutó `schema.sql` (paso 5) |
 | `Ya existe un Administrador` | Ya lo creó; continúe con el paso 7 |

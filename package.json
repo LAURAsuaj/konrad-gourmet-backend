@@ -13,7 +13,8 @@
     "start:cron": "node cron/worker.js",
     "admin:crear": "node scripts/crearAdministrador.js",
     "db:schema": "psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f src/infrastructure/database/schema.sql",
-    "test": "node tests/ejecutar.js"
+    "test": "node tests/ejecutar.js",
+    "sipsa:probar": "node scripts/probarSipsa.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.47.10",
@@ -21,6 +22,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "fast-xml-parser": "^5.12.0",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^4.6.0",

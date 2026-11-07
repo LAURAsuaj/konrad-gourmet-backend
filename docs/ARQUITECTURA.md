@@ -12,7 +12,7 @@ flowchart TB
   Fachada -->|delega| Dominio["Dominio\nmódulos · fábricas · eventos"]
   Dominio --> Infra["Infraestructura\nrepositorios SQL · adaptadores"]
   Infra --> BD[("PostgreSQL\nSupabase")]
-  Infra -->|TLS| Ext["Ministerio de Comercio\nCorreo SMTP · Redes sociales"]
+  Infra -->|TLS| Ext["Ministerio de Comercio (SOAP)\nCorreo SMTP · Redes sociales"]
   BD --> Outbox["Publicador Outbox"]
   Outbox --> Bus["Bus de eventos"]
   Bus --> Manejadores["Manejadores"]
@@ -116,6 +116,18 @@ Garantías que da la base de datos: `auditoria` y `log_error` no admiten `UPDATE
 
 `npm test` ejecuta más de 130 pruebas con su propia base PostgreSQL temporal (nunca Supabase): casos de uso, seguridad de la API (incluido TLS 1.3 real), envío real por SMTP, cron y la sincronía de esta documentación con el código. El CI de GitHub las repite contra PostgreSQL 16 y construye las dos imágenes Docker en cada cambio.
 
+
+## Servicio de precios del Ministerio (supuesto documentado)
+
+El enunciado menciona un servicio web del Ministerio de Comercio que devuelve valores estandarizados por producto, y exige SOAP para la integración con sistemas externos. No existe un servicio público con ese nombre; se **supone** que su contrato es el del servicio SOAP 1.2 de **SIPSA (DANE)**, público y gratuito, cuyo método `promediosSipsaCiudad` devuelve el precio promedio de cada producto por ciudad. Se eligió porque es SOAP (cumple el requisito), es real y está documentado.
+
+- **Dónde:** `MinisterioComercioAdapter` (implementa `IPrecioSugeridoService`) sobre un cliente SOAP 1.2 propio (`soap.js`). El dominio no cambia: depende solo del contrato.
+- **Cómo consulta:** el servicio no busca por producto, entrega la tabla completa. El adaptador la pide una vez, la guarda en memoria (`MINCOMERCIO_CACHE_MINUTOS`) y responde cada producto desde ella; si el servicio falla y hay datos guardados, los usa.
+- **Cómo asocia productos:** por nombre, sin distinguir tildes ni mayúsculas: coincidencia exacta; si no, nombres que empiezan por el pedido; si no, nombres que contienen todas sus palabras. Con varias variantes («Arroz de primera», «Arroz segunda») promedia el dato más reciente de cada una y de cada ciudad, o solo de `MINCOMERCIO_CIUDAD` si se configuró.
+- **Unidades:** los precios son por kilogramo; se convierten a gramo y libra. Otra unidad responde `UNIDAD_NO_SOPORTADA`.
+- **Alcance de los datos reales:** SIPSA publica precios mayoristas agrícolas; un producto que no exista en su tabla queda sin precio sugerido (`SIN_PRECIO`).
+- **Para la demostración:** `scripts/mockServicios.js` simula el servicio con el mismo contrato (WSDL incluido), de modo que el sistema funciona sin internet. Cambiar al servicio real es cambiar `MINCOMERCIO_API_URL`.
+
 ## Limitaciones conocidas
 
 - Cerrar sesión no invalida el token en el servidor; dura hasta su vencimiento.
@@ -123,5 +135,6 @@ Garantías que da la base de datos: `auditoria` y `log_error` no admiten `UPDATE
 - No hay recuperación de contraseña por correo: la restablece el Administrador.
 - Las notificaciones no tienen estado de lectura (leída o no leída): eso requeriría una columna nueva en la base de datos.
 - Las alarmas no se empujan: la aplicación debe consultarlas.
-- Los adaptadores del Ministerio de Comercio y de redes sociales asumen un formato de respuesta (descrito en cada adaptador) que debe confirmarse con las APIs reales.
+- El servicio de precios del Ministerio se probó con la guía y el WSDL públicos del DANE y con un simulador del mismo contrato, **no contra el servicio en vivo**; los parámetros de entrada de `promediosSipsaCiudad` no vienen en el WSDL y se asumió que no tiene. `npm run sipsa:probar` lo comprueba contra el servicio real.
+- El adaptador de redes sociales asume un formato de respuesta (descrito en el adaptador) que debe confirmarse con la API real.
 - Este repositorio es solo el backend: no incluye el frontend.

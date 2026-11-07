@@ -114,7 +114,8 @@ Marque cada punto antes de salir:
 **Servicios externos**
 
 - [ ] SMTP real (`SMTP_*`) y remitente (`CORREO_REMITENTE`); probado el envío de una cotización.
-- [ ] APIs reales del Ministerio de Comercio y de redes sociales, con su credencial. **Confirmar que su formato de respuesta coincide con el que asumen los adaptadores** (está descrito al inicio de `MinisterioComercioAdapter.js` y `RedesSocialesAdapter.js`).
+- [ ] Servicio de precios real: `MINCOMERCIO_API_URL` apuntando al servicio SOAP y `npm run sipsa:probar` ejecutado con éxito contra él (registros, ciudades y precios de sus productos). Si el servicio solo responde por `http://`, decidir `MINCOMERCIO_PERMITIR_HTTP=true` y documentar la excepción al HTTPS.
+- [ ] API real de redes sociales, con su credencial. **Confirmar que su formato de respuesta coincide con el que asume el adaptador** (descrito al inicio de `RedesSocialesAdapter.js`).
 - [ ] Sin las variables del simulador (`http://127.0.0.1:4010`); `scripts/mockServicios.js` no se usa en producción.
 
 **Negocio**
@@ -137,7 +138,7 @@ Marque cada punto antes de salir:
 | La API no arranca en producción y menciona `HTTPS_CERT_PATH` | Falta TLS: configure el certificado o `TRUST_PROXY=true` |
 | La API no arranca y menciona `DB_SSL` o `TLS_MIN_VERSION` | En producción deben ser `true` y `TLSv1.3` |
 | `docker compose` dice que falta `.env` | Cree el archivo a partir de `.env.example` |
-| `self-signed certificate in certificate chain` | Falta `DB_SSL_CA` con el certificado de Supabase |
+| `self-signed certificate in certificate chain` | Falta `DB_SSL_CA` con el certificado de Supabase, o está pegado en varias líneas sin comillas (use una sola línea con `\n`, que es lo más seguro con Docker) |
 | Errores de `connection timeout` a la base de datos | Se usa la conexión directa de Supabase (IPv6) en lugar del Session pooler, o se superó el límite de conexiones |
 | Respuestas 503 intermitentes con la cabecera `Retry-After` | La API no logra conectarse a la base de datos (tiempo de espera o límite de conexiones del pooler): revise el estado de Supabase y `DB_POOL_MAX` |
 | Las cotizaciones responden 503 | El correo no puede enviarse: revise `SMTP_*` y el log de errores |

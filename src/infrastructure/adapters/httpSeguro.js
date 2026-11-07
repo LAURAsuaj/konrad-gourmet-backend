@@ -1,9 +1,10 @@
 /**
- * Cliente HTTP JSON compartido por los adaptadores REST.
+ * Cliente HTTP compartido por los adaptadores de servicios externos (REST/JSON y SOAP).
  *
- * Usa node:https con TLS mínimo configurable (1.3 por defecto, CO-6), tiempo
- * máximo de espera y tope de tamaño de respuesta. Solo se permite http hacia
- * localhost y fuera de producción (servidores simulados en desarrollo).
+ * Usa node:https con TLS mínimo configurable (1.3 por defecto, CO-6), tiempo máximo de
+ * espera y tope de tamaño de respuesta. Solo se permite http hacia localhost y fuera de
+ * producción (servidores simulados en desarrollo), o hacia cualquier host cuando el
+ * llamador lo autoriza de forma explícita con `permitirHttp` (excepción documentada).
  */
 import https from 'node:https';
 import http from 'node:http';
@@ -42,12 +43,24 @@ function normalizar(servicio, error) {
 }
 
 /**
- * @param {{servicio: string, url: URL|string, metodo?: string, cabeceras?: object,
- *          cuerpo?: object, timeoutMs: number}} opciones
- * @returns {Promise<any>} cuerpo JSON de una respuesta 2xx (null si viene vacío)
- * @throws {ServicioExternoError}
+ * Envía una petición y devuelve la respuesta COMPLETA como texto, con cualquier código HTTP
+ * (quien llama decide qué hacer con los errores; por ejemplo, un SOAP Fault llega con HTTP 500).
+ *
+ * @param {{servicio: string, url: URL|string, metodo?: string, cabeceras?: object, cuerpo?: string|null,
+ *          timeoutMs: number, permitirHttp?: boolean, limiteBytes?: number}} opciones
+ * @returns {Promise<{estado: number, texto: string}>}
+ * @throws {ServicioExternoError} configuración inválida, red, tiempo de espera o respuesta demasiado grande
  */
-export function solicitarJson({ servicio, url, metodo = 'GET', cabeceras = {}, cuerpo, timeoutMs }) {
+export function solicitarTexto({
+  servicio,
+  url,
+  metodo = 'GET',
+  cabeceras = {},
+  cuerpo = null,
+  timeoutMs,
+  permitirHttp = false,
+  limiteBytes = LIMITE_RESPUESTA_BYTES,
+}) {
   return new Promise((resolve, reject) => {
     let destino;
     try {
@@ -58,16 +71,15 @@ export function solicitarJson({ servicio, url, metodo = 'GET', cabeceras = {}, c
     }
 
     const esHttps = destino.protocol === 'https:';
-    const httpLocalPermitido =
-      destino.protocol === 'http:' && !env.esProduccion && HOSTS_LOCALES.has(destino.hostname);
-    if (!esHttps && !httpLocalPermitido) {
+    const httpPermitido =
+      destino.protocol === 'http:' && (permitirHttp || (!env.esProduccion && HOSTS_LOCALES.has(destino.hostname)));
+    if (!esHttps && !httpPermitido) {
       reject(
         new ServicioExternoError(servicio, CODIGOS.CONFIGURACION, 'El servicio debe consumirse por HTTPS con TLS (CO-6)')
       );
       return;
     }
 
-    const datos = cuerpo === undefined ? null : JSON.stringify(cuerpo);
     const peticion = (esHttps ? https : http).request(
       destino,
       {
@@ -75,10 +87,7 @@ export function solicitarJson({ servicio, url, metodo = 'GET', cabeceras = {}, c
         agent: esHttps ? agenteTls : undefined,
         timeout: timeoutMs,
         headers: {
-          Accept: 'application/json',
-          ...(datos
-            ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(datos) }
-            : {}),
+          ...(cuerpo ? { 'Content-Length': Buffer.byteLength(cuerpo) } : {}),
           ...cabeceras,
         },
       },
@@ -88,7 +97,7 @@ export function solicitarJson({ servicio, url, metodo = 'GET', cabeceras = {}, c
 
         respuesta.on('data', (parte) => {
           total += parte.length;
-          if (total > LIMITE_RESPUESTA_BYTES) {
+          if (total > limiteBytes) {
             peticion.destroy(
               new ServicioExternoError(servicio, CODIGOS.RESPUESTA_INVALIDA, 'La respuesta excede el tamaño permitido')
             );
@@ -98,27 +107,7 @@ export function solicitarJson({ servicio, url, metodo = 'GET', cabeceras = {}, c
         });
 
         respuesta.on('error', (error) => reject(normalizar(servicio, error)));
-
-        respuesta.on('end', () => {
-          if (respuesta.statusCode < 200 || respuesta.statusCode >= 300) {
-            reject(
-              new ServicioExternoError(servicio, CODIGOS.HTTP, `El servicio respondió HTTP ${respuesta.statusCode}`, {
-                estado: respuesta.statusCode,
-              })
-            );
-            return;
-          }
-          const texto = Buffer.concat(partes).toString('utf8');
-          if (!texto) {
-            resolve(null);
-            return;
-          }
-          try {
-            resolve(JSON.parse(texto));
-          } catch {
-            reject(new ServicioExternoError(servicio, CODIGOS.RESPUESTA_INVALIDA, 'La respuesta no es JSON válido'));
-          }
-        });
+        respuesta.on('end', () => resolve({ estado: respuesta.statusCode, texto: Buffer.concat(partes).toString('utf8') }));
       }
     );
 
@@ -129,7 +118,34 @@ export function solicitarJson({ servicio, url, metodo = 'GET', cabeceras = {}, c
     });
     peticion.on('error', (error) => reject(normalizar(servicio, error)));
 
-    if (datos) peticion.write(datos);
+    if (cuerpo) peticion.write(cuerpo);
     peticion.end();
   });
+}
+
+/**
+ * @param {{servicio: string, url: URL|string, metodo?: string, cabeceras?: object,
+ *          cuerpo?: object, timeoutMs: number}} opciones
+ * @returns {Promise<any>} cuerpo JSON de una respuesta 2xx (null si viene vacío)
+ * @throws {ServicioExternoError}
+ */
+export async function solicitarJson({ servicio, url, metodo = 'GET', cabeceras = {}, cuerpo, timeoutMs }) {
+  const datos = cuerpo === undefined ? null : JSON.stringify(cuerpo);
+  const { estado, texto } = await solicitarTexto({
+    servicio,
+    url,
+    metodo,
+    cabeceras: { Accept: 'application/json', ...(datos ? { 'Content-Type': 'application/json' } : {}), ...cabeceras },
+    cuerpo: datos,
+    timeoutMs,
+  });
+  if (estado < 200 || estado >= 300) {
+    throw new ServicioExternoError(servicio, CODIGOS.HTTP, `El servicio respondió HTTP ${estado}`, { estado });
+  }
+  if (!texto) return null;
+  try {
+    return JSON.parse(texto);
+  } catch {
+    throw new ServicioExternoError(servicio, CODIGOS.RESPUESTA_INVALIDA, 'La respuesta no es JSON válido');
+  }
 }

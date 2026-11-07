@@ -28,7 +28,7 @@ El sistema lee **41 variables**; solo 4 son obligatorias.
 | `DB_POOL_MAX` | No | `10` | Conexiones máximas por proceso. La API y el cron cuentan por separado; no supere el límite del pooler. |
 | `DB_SSL` | No | `true` | Conexión a la base de datos con TLS. Solo `false` en desarrollo con un Postgres local sin TLS; en producción debe ser `true`. |
 | `DB_SSL_REJECT_UNAUTHORIZED` | No | `true` | Verifica el certificado del servidor de base de datos. `false` solo en desarrollo; en producción déjelo en `true` y entregue `DB_SSL_CA`. |
-| `DB_SSL_CA` | No | — | Certificado CA de Supabase, en una sola línea con `\n` en lugar de los saltos de línea. |
+| `DB_SSL_CA` | No | — | Certificado CA de Supabase. Formato recomendado: una sola línea con `\n` en lugar de cada salto de línea. También sirve en varias líneas **entre comillas dobles**; sin comillas el `.env` solo lee la primera línea y la conexión falla. Con `docker compose` use la forma de una sola línea. Los parámetros `sslmode` de `DATABASE_URL` se ignoran: la configuración TLS sale solo de estas variables. |
 | `SUPABASE_URL` | Sí | — | URL del proyecto: `https://PROYECTO.supabase.co` (debe empezar por `https://`). |
 | `SUPABASE_SERVICE_ROLE_KEY` | Sí | — | Clave `service_role` de Supabase. **Secreta**: nunca en el repositorio. |
 
@@ -62,13 +62,17 @@ El sistema lee **41 variables**; solo 4 son obligatorias.
 | `CRON_TENDENCIAS` | No | `0 8 * * 1` | Expresión cron de la consulta de tendencias y envío de promociones (por defecto, los lunes a las 8:00). |
 | `CRON_REINTENTO_PRECIOS` | No | `*/30 * * * *` | Expresión cron de respaldo del reintento del precio sugerido; la regla `reintento_precio_sugerido_minutos` tiene prioridad. |
 
-### Ministerio de Comercio (precio sugerido)
+### Ministerio de Comercio: servicio SOAP de precios (precio sugerido)
+
+El servicio se consume por **SOAP 1.2** con el contrato de SIPSA (DANE); ver [Arquitectura](ARQUITECTURA.md#servicio-de-precios-del-ministerio-supuesto-documentado). No usa credenciales.
 
 | Variable | Obligatoria | Valor por defecto | Descripción |
 |---|---|---|---|
-| `MINCOMERCIO_API_URL` | No | — | URL base de la API. Debe ser HTTPS (solo se admite HTTP hacia localhost fuera de producción). |
-| `MINCOMERCIO_API_KEY` | No | — | Credencial enviada como `Authorization: Bearer`. **Secreta.** |
-| `MINCOMERCIO_TIMEOUT_MS` | No | `8000` | Tiempo máximo de espera por consulta, en milisegundos. |
+| `MINCOMERCIO_API_URL` | No | — | Dirección del servicio SOAP (el `soap12:address` de su WSDL). Debe ser HTTPS; solo se admite HTTP hacia localhost fuera de producción, o con `MINCOMERCIO_PERMITIR_HTTP`. |
+| `MINCOMERCIO_TIMEOUT_MS` | No | `20000` | Tiempo máximo de espera de la consulta, en milisegundos. La respuesta trae la tabla completa de precios, que puede ser grande. |
+| `MINCOMERCIO_CIUDAD` | No | — (todas) | Ciudad de la que se toma el precio (por ejemplo `Bogotá`; sin distinguir tildes ni mayúsculas). Vacío: promedio de todas las ciudades. |
+| `MINCOMERCIO_PERMITIR_HTTP` | No | `false` | `true` autoriza consumir el servicio por `http://` sin cifrar. Es una excepción al requisito de HTTPS: úsela solo si el servicio real no responde por HTTPS (son datos públicos, sin credenciales) y déjelo documentado. |
+| `MINCOMERCIO_CACHE_MINUTOS` | No | `360` | Minutos que se conserva en memoria la tabla de precios antes de pedirla de nuevo. |
 
 ### Correo electrónico (SMTP)
 
@@ -101,7 +105,7 @@ En producción, `NODE_ENV=production` activa estas validaciones al arrancar: `TL
 | `TLS_MIN_VERSION` | `TLSv1.3` (o `TLSv1.2` si un servicio local no lo soporta) | `TLSv1.3` |
 | `JWT_SECRET` | Un valor propio, aunque sea de prueba | Aleatorio, largo y distinto al de desarrollo |
 | `SMTP_*` | Ethereal u otro buzón de pruebas | Servidor SMTP real |
-| `MINCOMERCIO_*` / `REDES_*` | `scripts/mockServicios.js` en `http://127.0.0.1:4010` | APIs reales |
+| `MINCOMERCIO_*` / `REDES_*` | `scripts/mockServicios.js` en `http://127.0.0.1:4010` | Servicios reales |
 | `CORS_ORIGINS` | `http://localhost:5173` | Dominio real del frontend |
 | `HTTPS_*` / `TRUST_PROXY` | No hacen falta | Una de las dos opciones es obligatoria |
 
