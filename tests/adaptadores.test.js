@@ -82,11 +82,16 @@ describe('Ministerio de Comercio · servicio SOAP con el contrato de SIPSA (DANE
   async function transmitirHistorial(res, { dias, porDia, mismaFecha = false }) {
     res.writeHead(200, { 'Content-Type': 'application/soap+xml' });
     res.write(ABRE);
+    // un solo par de escuchas para toda la transmisión (agregar uno por espera acumula escuchas)
+    let desbloquear = null;
+    res.on('drain', () => desbloquear?.());
+    res.once('close', () => desbloquear?.());
+    const esperarLiberacion = () => new Promise((r) => { desbloquear = r; });
     for (let d = 0; d < dias; d += 1) {
       for (let k = 0; k < porDia; k += 1) {
         const registro = k < 4 ? fila('Arroz', `CIUDAD ${k}`, 4500 - d, diaAtras(mismaFecha ? 0 : d)) : fila(`Relleno ${k}`, 'CIUDAD 0', 1000, diaAtras(mismaFecha ? 0 : d));
         estado.escritos += 1;
-        if (!res.write(registro)) await new Promise((r) => { res.once('drain', r); res.once('close', r); });
+        if (!res.write(registro)) await esperarLiberacion();
         if (res.destroyed) return;
       }
     }
