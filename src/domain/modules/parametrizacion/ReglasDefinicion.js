@@ -5,6 +5,7 @@
 import { ErrorValidacion } from '../../errors/ErroresDeNegocio.js';
 import { rangosValidos } from '../compras/ValidadorCotizacion.js';
 import { METRICAS_MEJOR_PROVEEDOR } from '../analitica/metricas.js';
+import { APARIENCIA_POR_DEFECTO, validarApariencia } from './apariencia.js';
 
 function numero(valor, etiqueta) {
   const n = typeof valor === 'number' ? valor : typeof valor === 'string' && valor.trim() !== '' ? Number(valor) : NaN;
@@ -73,5 +74,10 @@ export const REGLAS = Object.freeze({
   reintento_precio_sugerido_minutos: {
     descripcion: 'Minutos entre reintentos de consulta al Ministerio de Comercio (CU-10)',
     validar: entero(1, 1440, 'El intervalo de reintento'),
+  },
+  imagen_corporativa: {
+    descripcion: 'Imagen corporativa de la interfaz: nombre, colores, tipografía, logo y textos (requisito de interfaz gráfica)',
+    porDefecto: APARIENCIA_POR_DEFECTO,
+    validar: validarApariencia,
   },
 });

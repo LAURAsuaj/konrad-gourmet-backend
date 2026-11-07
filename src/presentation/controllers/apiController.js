@@ -36,6 +36,16 @@ export function crearApiController({ facade, authMiddleware, rbac }) {
       next(error);
     }
   });
+  // ---- Imagen corporativa (pública: la pantalla de inicio de sesión se pinta antes de autenticarse) ----
+  router.get('/apariencia', async (req, res, next) => {
+    try {
+      res.set('Cache-Control', 'public, max-age=60');
+      res.json({ datos: await facade.consultarApariencia() });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get('/auth/sesion', authMiddleware, (req, res) => {
     res.json({ datos: { usuario: facade.sesionDe(req.actor) } });
   });

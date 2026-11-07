@@ -100,7 +100,11 @@ export const OPERACIONES = Object.freeze({
   'reglas.definir': {
     roles: ADMIN, accion: 'UPDATE', entidad: 'regla',
     ejecutar: ({ m, actor, datos }) => m.parametrizacion.definirRegla(actor, datos.clave, datos.valor),
-    auditoria: (r) => ({ entidadId: r.clave, detalle: { valor: r.valor } }),
+    // un logo incrustado puede pesar decenas de KB: la auditoría guarda solo su tamaño
+    auditoria: (r) => ({
+      entidadId: r.clave,
+      detalle: { valor: typeof r.valor?.logo === 'string' && r.valor.logo.startsWith('data:') ? { ...r.valor, logo: `[imagen incrustada de ${r.valor.logo.length} caracteres]` } : r.valor },
+    }),
   },
 
   // ---- Cocina (CU-02, CU-03) ----

@@ -212,8 +212,9 @@ export class AuthService {
     if (Buffer.byteLength(password, 'utf8') > 72) {
       throw new ErrorValidacion('La contraseña no puede superar 72 bytes');
     }
-    if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
-      throw new ErrorValidacion('La contraseña debe combinar letras y números');
+    // enunciado (seguridad): mínimo 8 caracteres con al menos una mayúscula, una minúscula y un número
+    if (!/\p{Lu}/u.test(password) || !/\p{Ll}/u.test(password) || !/\d/.test(password)) {
+      throw new ErrorValidacion('La contraseña debe incluir al menos una mayúscula, una minúscula y un número');
     }
     return password;
   }

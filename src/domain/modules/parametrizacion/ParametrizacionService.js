@@ -11,6 +11,7 @@
  */
 import { ROLES, exigirRol } from '../auth/roles.js';
 import { REGLAS } from './ReglasDefinicion.js';
+import { completarApariencia } from './apariencia.js';
 import { CATALOGOS } from './CatalogosDefinicion.js';
 import {
   ErrorConflicto,
@@ -165,10 +166,20 @@ export class ParametrizacionService {
 
   async listarReglas(actor) {
     exigirRol(actor, [ROLES.ADMINISTRADOR]);
-    const filas = await this.#parametros.listar(this.#db);
-    return filas
-      .filter((f) => REGLAS[f.clave])
-      .map((f) => ({ clave: f.clave, valor: f.valor, descripcion: f.descripcion ?? REGLAS[f.clave].descripcion, actualizadoEn: f.actualizado_en }));
+    const filas = (await this.#parametros.listar(this.#db)).filter((f) => REGLAS[f.clave]);
+    const reglas = filas.map((f) => ({ clave: f.clave, valor: f.valor, descripcion: f.descripcion ?? REGLAS[f.clave].descripcion, actualizadoEn: f.actualizado_en }));
+    // una regla con valor por defecto se lista aunque todavía no se haya guardado (por ejemplo la imagen corporativa)
+    for (const [clave, regla] of Object.entries(REGLAS)) {
+      if (regla.porDefecto !== undefined && !filas.some((f) => f.clave === clave)) {
+        reglas.push({ clave, valor: regla.porDefecto, descripcion: regla.descripcion, actualizadoEn: null });
+      }
+    }
+    return reglas;
+  }
+
+  /** Imagen corporativa vigente (la guardada completada con los valores por defecto). PÚBLICA: no requiere sesión. */
+  async consultarApariencia() {
+    return completarApariencia(await this.#parametros.obtener('imagen_corporativa', this.#db, null));
   }
 
   async definirRegla(actor, clave, valor) {

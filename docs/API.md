@@ -1,6 +1,6 @@
 # Referencia de la API
 
-API REST de Konrad Gourmet. Esta referencia describe las **42 rutas** de `/api/v1` y la ruta de salud, con ejemplos tomados de respuestas reales del sistema.
+API REST de Konrad Gourmet. Esta referencia describe las **43 rutas** de `/api/v1` y la ruta de salud, con ejemplos tomados de respuestas reales del sistema.
 
 > Los ejemplos usan datos de prueba. Los identificadores (`<id>`) son UUID que entrega la propia API. Las listas se muestran abreviadas: la respuesta real puede traer más elementos.
 
@@ -104,6 +104,7 @@ Los valores de cotizaciones y órdenes de compra solo los ven los roles del áre
 | Ruta | `JEFE_COCINA` | `MESERO` | `AUXILIAR_COMPRAS` | `DIRECTOR_COMPRAS` | `DIRECTOR_COMERCIAL` | `ADMINISTRADOR` |
 |---|---|---|---|---|---|---|
 | `POST /api/v1/auth/login` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| `GET /api/v1/apariencia` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | `GET /api/v1/auth/sesion` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | `POST /api/v1/auth/refrescar` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 | `POST /api/v1/auth/logout` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
@@ -147,7 +148,7 @@ Los valores de cotizaciones y órdenes de compra solo los ven los roles del áre
 | `GET /api/v1/logs/:id` | — | — | — | — | — | ✔ |
 | `GET /salud` | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 
-`POST /api/v1/auth/login` y `GET /salud` no requieren token. La matriz sale del catálogo de operaciones del código (`src/facade/operaciones.js`).
+`POST /api/v1/auth/login`, `GET /api/v1/apariencia` y `GET /salud` no requieren token. La matriz sale del catálogo de operaciones del código (`src/facade/operaciones.js`).
 
 ## Salud
 
@@ -232,6 +233,30 @@ Devuelve los datos de la sesión vigente, sin consultar la base de datos.
 
 **Errores frecuentes:** 401 `NO_AUTENTICADO`
 
+### GET /api/v1/apariencia
+
+Imagen corporativa vigente de la interfaz: nombre, colores, tipografía, logo y textos. **No requiere token**, porque la pantalla de inicio de sesión se pinta con ella antes de autenticarse. La respuesta lleva `Cache-Control: public, max-age=60`. La cambia el Administrador con `PUT /api/v1/reglas/imagen_corporativa` (ver [Configuración](CONFIGURACION.md#imagen-corporativa)).
+
+**Roles:** público
+
+**Respuesta 200**
+```json
+{
+  "datos": {
+    "nombreComercial": "Konrad Gourmet",
+    "eslogan": "",
+    "colorPrimario": "#8B1E3F",
+    "colorSecundario": "#C8A24A",
+    "colorFondo": "#FFFFFF",
+    "colorTexto": "#1F2933",
+    "tipografia": "sistema",
+    "logo": null,
+    "textoBienvenida": "Bienvenido al sistema de abastecimiento",
+    "textoPiePagina": ""
+  }
+}
+```
+
 ### POST /api/v1/auth/refrescar
 
 Renueva el token mientras el usuario esté activo (expiración por inactividad).
@@ -306,7 +331,7 @@ El propio usuario cambia su contraseña.
 ```
 
 - Exige la contraseña actual: con solo un token robado no se puede cambiar.
-- La nueva debe cumplir las mismas reglas que al crear un usuario (mínimo 8 caracteres, letras y números, máximo 72 bytes) y ser distinta de la actual.
+- La nueva debe cumplir las mismas reglas que al crear un usuario (mínimo 8 caracteres con al menos una mayúscula, una minúscula y un número, máximo 72 bytes) y ser distinta de la actual.
 - Una contraseña actual incorrecta cuenta como intento fallido: al llegar al máximo (`max_intentos_login`) la cuenta se bloquea hasta que un Administrador la habilite.
 - Queda auditado (`UPDATE` sobre `usuario`) sin guardar ninguna contraseña.
 - Las sesiones ya abiertas siguen vigentes hasta que venza su token (30 minutos por defecto).
@@ -349,7 +374,7 @@ Crea un usuario y le asigna un rol.
 ```
 
 - Los roles `JEFE_COCINA` y `MESERO` requieren `puntoId`; los demás no deben llevarlo.
-- La contraseña debe tener al menos 8 caracteres, combinar letras y números y no superar 72 bytes.
+- La contraseña debe tener al menos 8 caracteres, con al menos una mayúscula, una minúscula y un número, y no superar 72 bytes.
 - El correo es único sin distinguir mayúsculas y se guarda en minúsculas.
 - La respuesta nunca incluye la contraseña ni su hash.
 
@@ -631,15 +656,26 @@ Lista las reglas parametrizables del sistema con su valor actual.
     {
       "clave": "criterio_mejor_proveedor",
       "valor": {
-        "metrica": "ordenes_compra"
+        "metrica": "menor_razon_precio"
       },
-      "descripcion": "Criterio del KPI mejor proveedor del tablero BAM (CU-14)",
+      "descripcion": "Criterio del KPI mejor proveedor del tablero BAM: mejores precios (CU-14)",
       "actualizadoEn": "2026-11-05T05:02:58.454Z"
+    },
+    {
+      "clave": "imagen_corporativa",
+      "valor": {
+        "nombreComercial": "Konrad Gourmet",
+        "colorPrimario": "#8B1E3F",
+        "…": "los demás campos de la imagen corporativa"
+      },
+      "descripcion": "Imagen corporativa de la interfaz: nombre, colores, tipografía, logo y textos (requisito de interfaz gráfica)",
+      "actualizadoEn": null
     }
   ]
 }
 ```
 
+- La lista completa tiene las 7 reglas; una regla que todavía no se guardó (como `imagen_corporativa`) aparece con su valor por defecto y `actualizadoEn` nulo.
 - Reglas y valores válidos: [Configuración](CONFIGURACION.md#reglas-del-sistema).
 
 ### PUT /api/v1/reglas/:clave
@@ -1600,6 +1636,8 @@ Tablero de control (BAM): producto más demandado, punto con mayor demanda y mej
 | `desde` | consulta | Inicio del periodo (opcional) |
 | `hasta` | consulta | Fin del periodo (opcional) |
 
+Sin periodo, cada indicador usa el suyo, el que pide el enunciado: producto más demandado y punto con mayor demanda, **últimos 30 días**; mejor proveedor, **último año** (365 días). Con `desde` y/o `hasta`, los tres indicadores usan ese periodo. Cada indicador informa el que usó en su campo `periodo` (`desde`, `hasta` y `descripcion`); `periodo` de la raíz es solo el que el usuario indicó. El criterio del mejor proveedor es, por defecto, el de **mejores precios** (`menor_razon_precio`).
+
 **Respuesta 200**
 ```json
 {
@@ -1611,6 +1649,11 @@ Tablero de control (BAM): producto más demandado, punto con mayor demanda y mej
     },
     "productoMasDemandado": {
       "disponible": true,
+      "periodo": {
+        "desde": "2026-10-06T05:03:02.861Z",
+        "hasta": null,
+        "descripcion": "Últimos 30 días"
+      },
       "producto": "Arroz",
       "unidad": "kg",
       "demanda": 112,
@@ -1635,6 +1678,11 @@ Tablero de control (BAM): producto más demandado, punto con mayor demanda y mej
     },
     "restauranteMayorDemanda": {
       "disponible": true,
+      "periodo": {
+        "desde": "2026-10-06T05:03:02.861Z",
+        "hasta": null,
+        "descripcion": "Últimos 30 días"
+      },
       "punto": "Chapinero",
       "platosVendidos": 60,
       "pedidos": 1,
@@ -1648,6 +1696,11 @@ Tablero de control (BAM): producto más demandado, punto con mayor demanda y mej
     },
     "mejorProveedor": {
       "disponible": true,
+      "periodo": {
+        "desde": "2025-11-05T05:03:02.861Z",
+        "hasta": null,
+        "descripcion": "Último año (365 días)"
+      },
       "metrica": "ordenes_compra",
       "proveedor": "Proveedor A",
       "valorMetrica": 1,

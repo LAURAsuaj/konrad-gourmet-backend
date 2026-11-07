@@ -110,12 +110,13 @@ El Director de Compras registra el **valor unitario** que cotizó el proveedor p
 
 Se ejecuta sola, de forma asíncrona, cuando hay valores cotizados y valor sugerido. Se calcula la **razón** `valor cotizado ÷ valor sugerido` y se compara con los rangos de la regla `rangos_validacion_cotizacion`:
 
-| Razón (con los valores iniciales) | Resultado | Significado |
+| Razón (con los valores iniciales, los del enunciado) | Resultado | Significado |
 |---|---|---|
-| Entre 0,70 y 1,10 | `OPCIONADA` | Precio razonable: puede generar orden |
-| Menor que 0,70 | `SOSPECHOSA` | Precio irrealmente bajo |
-| Mayor que 1,10 y hasta 1,30 | `SOSPECHOSA` | Más caro de lo esperado |
-| Mayor que 1,30 | `RECHAZADA` | Demasiado costosa |
+| Entre 0,50 y 1,25 (ambos incluidos) | `OPCIONADA` | Precio razonable: puede generar orden |
+| Menor que 0,50 | `SOSPECHOSA` | Más de 50 % por debajo del valor del Ministerio |
+| Mayor que 1,25 | `RECHAZADA` | Más de 25 % por encima del valor del Ministerio |
+
+Los umbrales son parametrizables. Si el Administrador baja `opcionada_max` por debajo de `rechazada_sobre`, aparece una franja `SOSPECHOSA` entre ambos (más caro de lo esperado, pero no rechazable).
 
 - La comparación usa el valor sugerido de los alimentos que **cubre** la cotización, que coincide con el total de la solicitud cuando los cubre todos.
 - Si aún no hay valor sugerido completo, la cotización queda `ENVIADA` y se valida sola cuando el precio llega.
@@ -126,17 +127,23 @@ Se ejecuta sola, de forma asíncrona, cuando hay valores cotizados y valor suger
 
 El Director de Compras consulta las cotizaciones `OPCIONADA` de la solicitud (`GET /api/v1/solicitudes/:id/cotizaciones-opcionadas`) y genera la orden de la elegida. Solo las `OPCIONADA` generan orden y cada cotización genera **una única** orden, con consecutivo, proveedor, alimentos, cantidades, valores y total.
 
+## Interfaz
+
+### Imagen corporativa
+
+El requisito de interfaz gráfica pide poder cambiar la imagen corporativa sin un experto en diseño. El Administrador define nombre, colores, tipografía, logo y textos en la regla `imagen_corporativa` (`PUT /api/v1/reglas/imagen_corporativa`, con validación de colores, de contraste y del logo) y la interfaz los lee en `GET /api/v1/apariencia`, una ruta pública para que hasta la pantalla de inicio de sesión se pinte con ellos. Los valores se aplican a la interfaz como variables de color y texto, de modo que un cambio se ve sin modificar código. Los campos y límites están en [Configuración](CONFIGURACION.md#imagen-corporativa).
+
 ## Analítica
 
 ### Tablero de control
 
-Para el Director Comercial, con tres indicadores independientes y un periodo opcional:
+Para el Director Comercial, con tres indicadores independientes. Sin periodo indicado, cada uno usa el que pide el enunciado: la demanda (producto y punto), los **últimos 30 días**, y el proveedor, el **último año**. Con un periodo indicado, los tres usan ese periodo:
 
 | Indicador | Cómo se calcula |
 |---|---|
 | Producto más demandado | Consumo de los pedidos (platos × ingredientes) más la cantidad solicitada en solicitudes de alimentos |
 | Punto con mayor demanda | Platos vendidos por punto |
-| Mejor proveedor | Según la regla `criterio_mejor_proveedor`: más órdenes de compra, más cotizaciones `OPCIONADA` o menor razón de precio |
+| Mejor proveedor | Según la regla `criterio_mejor_proveedor`; por defecto, el que tiene **los mejores precios** (menor razón de precio). También puede ser el de más órdenes de compra o el de más cotizaciones `OPCIONADA` |
 
 Si no hay datos, el indicador lo informa; si su cálculo falla, se registra el error y los otros dos siguen funcionando. **El tablero nunca muestra montos ni razones de precio**: los valores de compras solo los ve el área de compras.
 

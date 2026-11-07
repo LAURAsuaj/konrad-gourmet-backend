@@ -119,11 +119,31 @@ Se consultan con `GET /api/v1/reglas` y se cambian con `PUT /api/v1/reglas/:clav
 | `alarma_porcentaje` | `25` | Número mayor que 0 y máximo 100 | Porcentaje de la cantidad de referencia en el que se dispara la alarma de stock bajo (CU-07) |
 | `max_intentos_login` | `3` | Entero de 1 a 10 | Intentos fallidos de inicio de sesión antes de bloquear la cuenta (CU-01) |
 | `hora_descuento_diario` | `"02:00"` | Texto `HH:MM` en formato de 24 horas | Hora (HH:MM) del descuento diario de inventario (CU-06) |
-| `rangos_validacion_cotizacion` | `{"sospechosa_bajo": 0.70, "opcionada_max": 1.10, "rechazada_sobre": 1.30}` | Tres números mayores que 0 con `sospechosa_bajo` ≤ `opcionada_max` ≤ `rechazada_sobre` | Razón valor cotizado / valor sugerido que define RECHAZADA, SOSPECHOSA y OPCIONADA (CU-12) |
-| `criterio_mejor_proveedor` | `{"metrica": "ordenes_compra"}` | `metrica`: `ordenes_compra`, `cotizaciones_opcionadas` o `menor_razon_precio` | Criterio del KPI mejor proveedor del tablero BAM (CU-14) |
+| `rangos_validacion_cotizacion` | `{"sospechosa_bajo": 0.50, "opcionada_max": 1.25, "rechazada_sobre": 1.25}` | Tres números mayores que 0 con `sospechosa_bajo` ≤ `opcionada_max` ≤ `rechazada_sobre` | Razón valor cotizado / valor sugerido que define RECHAZADA, SOSPECHOSA y OPCIONADA (CU-12). Los valores iniciales son los del enunciado |
+| `criterio_mejor_proveedor` | `{"metrica": "menor_razon_precio"}` | `metrica`: `ordenes_compra`, `cotizaciones_opcionadas` o `menor_razon_precio` | Criterio del KPI mejor proveedor del tablero BAM (CU-14); por defecto, el proveedor con los mejores precios |
 | `reintento_precio_sugerido_minutos` | `30` | Entero de 1 a 1440 | Minutos entre reintentos de consulta al Ministerio de Comercio (CU-10) |
+| `imagen_corporativa` | ver [Imagen corporativa](#imagen-corporativa) | Objeto con los campos de la imagen corporativa; los que no se indican conservan su valor | Imagen corporativa de la interfaz: nombre, colores, tipografía, logo y textos (requisito de interfaz gráfica) |
 
-> **Pendiente de negocio:** los tres umbrales de `rangos_validacion_cotizacion` son valores iniciales propuestos. El SRS indica que los define el área de compras; deben confirmarse con ella antes de producción.
+> **Rangos de validación:** los valores iniciales de `rangos_validacion_cotizacion` son las reglas del enunciado: una cotización más de 25 % por encima del valor del Ministerio es `RECHAZADA`; más de 50 % por debajo, `SOSPECHOSA`; y las demás, `OPCIONADA`. Como `opcionada_max` y `rechazada_sobre` valen lo mismo, no existe una franja «sospechosa por cara»; si el área de compras la quisiera, bastaría con bajar `opcionada_max`. Al aplicar el esquema en una base que ya tenía los valores iniciales anteriores (0,70 / 1,10 / 1,30), `npm run db:schema` los actualiza; si el Administrador ya los había cambiado, no se tocan.
+
+### Imagen corporativa
+
+La interfaz puede cambiar su imagen sin tocar código ni contratar a un diseñador: el Administrador define la regla `imagen_corporativa` (`PUT /api/v1/reglas/imagen_corporativa`) y la interfaz la lee en la ruta pública `GET /api/v1/apariencia`, incluso antes de iniciar sesión. Los campos que no se indican conservan su valor por defecto.
+
+| Campo | Valor por defecto | Valores válidos |
+|---|---|---|
+| `nombreComercial` | `Konrad Gourmet` | Texto de 1 a 60 caracteres |
+| `eslogan` | vacío | Texto de hasta 120 caracteres |
+| `colorPrimario` | `#8B1E3F` | Color `#RRGGBB` |
+| `colorSecundario` | `#C8A24A` | Color `#RRGGBB` |
+| `colorFondo` | `#FFFFFF` | Color `#RRGGBB` |
+| `colorTexto` | `#1F2933` | Color `#RRGGBB`; con el color de fondo debe tener un contraste de al menos 4,5:1 (accesibilidad WCAG 2.1 AA) |
+| `tipografia` | `sistema` | `sistema`, `serif`, `redondeada` o `monoespaciada` |
+| `logo` | ninguno (`null`) | URL `https` o imagen incrustada `data:image/png`, `jpeg`, `webp` o `gif` en base64 (máximo unos 60 KB; no se admite SVG por seguridad); `null` lo quita |
+| `textoBienvenida` | `Bienvenido al sistema de abastecimiento` | Texto de hasta 200 caracteres |
+| `textoPiePagina` | vacío | Texto de hasta 200 caracteres |
+
+Los textos no admiten `<` ni `>`. La auditoría guarda solo el tamaño de un logo incrustado, no la imagen.
 
 ## Catálogos
 

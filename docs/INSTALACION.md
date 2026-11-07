@@ -62,7 +62,7 @@ Abra **SQL Editor** en Supabase, pegue todo el contenido de `src/infrastructure/
 
 ## 6. Crear el primer administrador
 
-Sin administrador nadie puede crear cuentas. La contraseña debe tener al menos 8 caracteres, con letras y números.
+Sin administrador nadie puede crear cuentas. La contraseña debe tener al menos 8 caracteres, con al menos una mayúscula, una minúscula y un número.
 
 ```bash
 # Linux / Mac

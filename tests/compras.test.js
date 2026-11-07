@@ -199,10 +199,10 @@ describe('Compras', () => {
       assert.equal(await codigoDe(() => E('cotizaciones.registrarValores', A.aux, { id: cotA.id, cuerpo: un(10) })), 'PROHIBIDO');
     });
 
-    it('clasifica OPCIONADA (razón 0,89) y SOSPECHOSA (razón 1,19) y audita el resultado', async () => {
+    it('clasifica OPCIONADA (razón 0,89) y SOSPECHOSA (razón ~0,33, precio irrealmente bajo) y audita el resultado', async () => {
       const r = await registrarValores(cotA.id, { valores: [{ detalleSolicitudId: d1.id, valorUnitario: 4000 }] });
       assert.equal(r.valorTotal, 400_000);
-      await registrarValores(cotB.id, { valores: await valores(S1.id, { arroz: 6500, pollo: 12000 }) });
+      await registrarValores(cotB.id, { valores: await valores(S1.id, { arroz: 1800, pollo: 3300 }) });
       assert.ok(await app.drenado());
       assert.equal(await estadoCotizacion(cotA.id), 'OPCIONADA');
       assert.equal(await estadoCotizacion(cotB.id), 'SOSPECHOSA');
@@ -236,6 +236,18 @@ describe('Compras', () => {
       assert.equal((await app.q("SELECT 1 FROM outbox WHERE tipo = 'PrecioSugeridoActualizado' AND payload->>'solicitudId' = $1", [S6.id])).length, 1, 'el evento no se duplica');
     });
 
+    it('los rangos por defecto son los del enunciado y se aplican en sus límites exactos', async () => {
+      const [{ valor }] = await app.q("SELECT valor FROM parametro WHERE clave = 'rangos_validacion_cotizacion'");
+      assert.deepEqual(valor, { sospechosa_bajo: 0.5, opcionada_max: 1.25, rechazada_sobre: 1.25 });
+      const { clasificarCotizacion } = await import('../src/domain/modules/compras/ValidadorCotizacion.js');
+      const clasificar = (razon) => clasificarCotizacion({ valorCotizado: razon * 100, valorSugerido: 100, rangos: valor }).estado;
+      // más de 25 % por encima = RECHAZADA; más de 50 % por debajo = SOSPECHOSA; lo demás (extremos incluidos) = OPCIONADA
+      assert.deepEqual(
+        [1.26, 1.25, 1.19, 1, 0.5, 0.49].map(clasificar),
+        ['RECHAZADA', 'OPCIONADA', 'OPCIONADA', 'OPCIONADA', 'OPCIONADA', 'SOSPECHOSA']
+      );
+    });
+
     it('sin rangos parametrizados no se clasifica y se registra el error', async () => {
       await app.q("UPDATE parametro SET valor = '{}'::jsonb WHERE clave = 'rangos_validacion_cotizacion'");
       try {
@@ -243,7 +255,7 @@ describe('Compras', () => {
         assert.equal(await estadoCotizacion(c.id), 'ENVIADA');
         assert.ok((await app.q("SELECT 1 FROM log_error WHERE mensaje LIKE '%rangos de validación%'")).length >= 1);
       } finally {
-        await app.q(`UPDATE parametro SET valor = '{"sospechosa_bajo": 0.70, "opcionada_max": 1.10, "rechazada_sobre": 1.30}'::jsonb WHERE clave = 'rangos_validacion_cotizacion'`);
+        await app.q(`UPDATE parametro SET valor = '{"sospechosa_bajo": 0.50, "opcionada_max": 1.25, "rechazada_sobre": 1.25}'::jsonb WHERE clave = 'rangos_validacion_cotizacion'`);
       }
     });
   });

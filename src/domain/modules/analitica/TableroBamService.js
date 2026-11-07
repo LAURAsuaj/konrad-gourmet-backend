@@ -8,10 +8,11 @@
  * en el log y se informa solo en ese indicador (EXCEP-2), sin tumbar el tablero.
  */
 import { ROLES, exigirRol } from '../auth/roles.js';
-import { METRICAS_MEJOR_PROVEEDOR, METRICA_POR_DEFECTO } from './metricas.js';
+import { METRICAS_MEJOR_PROVEEDOR, METRICA_POR_DEFECTO, PERIODO_DEMANDA_DIAS, PERIODO_PROVEEDOR_DIAS } from './metricas.js';
 import { exigirRangoFechas } from '../../consulta.js';
 
 const numero = (valor) => (valor === null || valor === undefined ? null : Number(valor));
+const DIA_MS = 86_400_000;
 
 export class TableroBamService {
   #db;
@@ -27,22 +28,39 @@ export class TableroBamService {
     this.#registrador = registrador;
   }
 
-  /** @param {{desde?: string|Date, hasta?: string|Date}} [filtros] periodo opcional */
+  /**
+   * Sin periodo indicado, cada indicador usa el suyo (enunciado): producto y restaurante con mayor
+   * demanda en los últimos 30 días y proveedor con los mejores precios en el último año. Con un
+   * periodo indicado (`desde` y/o `hasta`) los tres indicadores usan ese periodo.
+   *
+   * @param {{desde?: string|Date, hasta?: string|Date}} [filtros]
+   */
   async consultarTablero(actor, filtros = {}) {
     exigirRol(actor, [ROLES.DIRECTOR_COMERCIAL]);
     const { desde, hasta } = exigirRangoFechas(filtros.desde, filtros.hasta);
+    const indicado = desde !== null || hasta !== null;
+    const ahora = Date.now();
+    const periodo = (dias, descripcion) => (indicado
+      ? { desde, hasta, descripcion: 'Periodo indicado por el usuario' }
+      : { desde: new Date(ahora - dias * DIA_MS), hasta: null, descripcion }); // sin límite superior: incluye lo de hoy
+    const periodos = {
+      productoMasDemandado: periodo(PERIODO_DEMANDA_DIAS, `Últimos ${PERIODO_DEMANDA_DIAS} días`),
+      restauranteMayorDemanda: periodo(PERIODO_DEMANDA_DIAS, `Últimos ${PERIODO_DEMANDA_DIAS} días`),
+      mejorProveedor: periodo(PERIODO_PROVEEDOR_DIAS, 'Último año (365 días)'),
+    };
 
     const [productoMasDemandado, restauranteMayorDemanda, mejorProveedor] = await Promise.all([
-      this.#kpi('producto más demandado', () => this.#productoMasDemandado(desde, hasta)),
-      this.#kpi('restaurante con mayor demanda', () => this.#restauranteMayorDemanda(desde, hasta)),
-      this.#kpi('mejor proveedor', () => this.#mejorProveedor(desde, hasta)),
+      this.#kpi('producto más demandado', () => this.#productoMasDemandado(periodos.productoMasDemandado.desde, periodos.productoMasDemandado.hasta)),
+      this.#kpi('restaurante con mayor demanda', () => this.#restauranteMayorDemanda(periodos.restauranteMayorDemanda.desde, periodos.restauranteMayorDemanda.hasta)),
+      this.#kpi('mejor proveedor', () => this.#mejorProveedor(periodos.mejorProveedor.desde, periodos.mejorProveedor.hasta)),
     ]);
+    const publico = ({ desde: d, hasta: h, descripcion }) => ({ desde: d?.toISOString() ?? null, hasta: h?.toISOString() ?? null, descripcion });
     return {
       generadoEn: new Date().toISOString(),
-      periodo: { desde: desde?.toISOString() ?? null, hasta: hasta?.toISOString() ?? null },
-      productoMasDemandado,
-      restauranteMayorDemanda,
-      mejorProveedor,
+      periodo: { desde: desde?.toISOString() ?? null, hasta: hasta?.toISOString() ?? null }, // el indicado por el usuario (nulo si no indicó)
+      productoMasDemandado: { ...productoMasDemandado, periodo: publico(periodos.productoMasDemandado) },
+      restauranteMayorDemanda: { ...restauranteMayorDemanda, periodo: publico(periodos.restauranteMayorDemanda) },
+      mejorProveedor: { ...mejorProveedor, periodo: publico(periodos.mejorProveedor) },
     };
   }
 

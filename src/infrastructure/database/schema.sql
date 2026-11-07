@@ -71,11 +71,28 @@ INSERT INTO parametro (clave, valor, descripcion) VALUES
   ('alarma_porcentaje', '25', 'Porcentaje de la cantidad de referencia en el que se dispara la alarma de stock bajo (CU-07)'),
   ('max_intentos_login', '3', 'Intentos fallidos de inicio de sesión antes de bloquear la cuenta (CU-01)'),
   ('hora_descuento_diario', '"02:00"', 'Hora (HH:MM, zona horaria del cron) del descuento diario de inventario (CU-06)'),
-  ('rangos_validacion_cotizacion', '{"sospechosa_bajo": 0.70, "opcionada_max": 1.10, "rechazada_sobre": 1.30}',
-   'Razón valor cotizado / valor sugerido. VALORES INICIALES: el área de compras debe definirlos (SRS CU-12)'),
-  ('criterio_mejor_proveedor', '{"metrica": "ordenes_compra"}', 'Criterio del KPI mejor proveedor del tablero BAM (CU-14)'),
+  ('rangos_validacion_cotizacion', '{"sospechosa_bajo": 0.50, "opcionada_max": 1.25, "rechazada_sobre": 1.25}',
+   'Razón valor cotizado / valor sugerido (enunciado): más de 25 % por encima = RECHAZADA; más de 50 % por debajo = SOSPECHOSA; el resto = OPCIONADA (CU-12)'),
+  ('criterio_mejor_proveedor', '{"metrica": "menor_razon_precio"}', 'Criterio del KPI mejor proveedor del tablero BAM: mejores precios (CU-14)'),
   ('reintento_precio_sugerido_minutos', '30', 'Minutos entre reintentos de consulta al Ministerio de Comercio (CU-10)')
 ON CONFLICT (clave) DO NOTHING;
+
+-- Migración de valores iniciales anteriores (idempotente). Solo cambia una regla si todavía tiene el valor
+-- que el sistema sembró al inicio; una regla que el Administrador ya modificó no se toca.
+UPDATE parametro
+   SET valor = '{"sospechosa_bajo": 0.50, "opcionada_max": 1.25, "rechazada_sobre": 1.25}'::jsonb,
+       descripcion = 'Razón valor cotizado / valor sugerido (enunciado): más de 25 % por encima = RECHAZADA; más de 50 % por debajo = SOSPECHOSA; el resto = OPCIONADA (CU-12)',
+       actualizado_en = now()
+ WHERE clave = 'rangos_validacion_cotizacion'
+   AND valor = '{"sospechosa_bajo": 0.70, "opcionada_max": 1.10, "rechazada_sobre": 1.30}'::jsonb;
+
+UPDATE parametro
+   SET valor = '{"metrica": "menor_razon_precio"}'::jsonb,
+       descripcion = 'Criterio del KPI mejor proveedor del tablero BAM: mejores precios (CU-14)',
+       actualizado_en = now()
+ WHERE clave = 'criterio_mejor_proveedor'
+   AND valor = '{"metrica": "ordenes_compra"}'::jsonb
+   AND actualizado_en = (SELECT actualizado_en FROM parametro WHERE clave = 'alarma_porcentaje');
 
 -- ---------------------------------------------------------------------------
 -- 2. Seguridad (CU-01)

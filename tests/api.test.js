@@ -35,6 +35,27 @@ describe('API HTTP', () => {
     return r.json.datos.id;
   };
 
+  describe('Imagen corporativa pública', () => {
+    it('GET /apariencia no exige sesión, se puede guardar un instante y refleja los cambios del Administrador', async () => {
+      const inicial = await app.http('GET', '/apariencia');
+      assert.equal(inicial.estado, 200);
+      assert.equal(inicial.json.datos.nombreComercial, 'Konrad Gourmet');
+      assert.match(inicial.cabeceras.get('cache-control'), /max-age=60/);
+
+      const cambio = await app.http('PUT', '/reglas/imagen_corporativa', { token: T.admin, cuerpo: { valor: { nombreComercial: 'Mi Restaurante', colorPrimario: '#0F766E' } } });
+      assert.equal(cambio.estado, 200, cambio.texto);
+      const despues = await app.http('GET', '/apariencia');
+      assert.deepEqual([despues.json.datos.nombreComercial, despues.json.datos.colorPrimario], ['Mi Restaurante', '#0F766E']);
+    });
+
+    it('cambiarla exige ser Administrador autenticado y un valor válido', async () => {
+      assert.equal((await app.http('PUT', '/reglas/imagen_corporativa', { cuerpo: { valor: { nombreComercial: 'X' } } })).estado, 401);
+      const malo = await app.http('PUT', '/reglas/imagen_corporativa', { token: T.admin, cuerpo: { valor: { colorPrimario: 'azul' } } });
+      assert.equal(malo.estado, 400);
+      assert.equal((await app.http('GET', '/apariencia')).json.datos.colorPrimario, '#0F766E', 'el valor inválido no cambió nada');
+    });
+  });
+
   describe('Cabeceras, errores generales y CORS', () => {
     it('/salud responde y verifica la base de datos; la respuesta lleva cabeceras de seguridad', async () => {
       const r = await fetch(app.base.replace('/api/v1', '/salud'));

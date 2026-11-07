@@ -119,8 +119,18 @@ describe('Autenticación (CU-01)', () => {
       assert.equal(await cambiar(actor, { passwordActual: 'Clave1234', passwordNueva: 'corta1' }), 'VALIDACION', 'muy corta');
       assert.equal(await cambiar(actor, { passwordActual: 'Clave1234', passwordNueva: 'soloLetrasAqui' }), 'VALIDACION', 'sin números');
       assert.equal(await cambiar(actor, { passwordActual: 'Clave1234', passwordNueva: '123456789012' }), 'VALIDACION', 'sin letras');
+      assert.equal(await cambiar(actor, { passwordActual: 'Clave1234', passwordNueva: 'sinmayuscula1' }), 'VALIDACION', 'sin mayúscula');
+      assert.equal(await cambiar(actor, { passwordActual: 'Clave1234', passwordNueva: 'SINMINUSCULA1' }), 'VALIDACION', 'sin minúscula');
+      assert.equal(await cambiar(actor, { passwordActual: 'Clave1234', passwordNueva: 'SinNumeros' }), 'VALIDACION', 'sin número');
       assert.equal(await cambiar(actor, { passwordActual: 'Clave1234', passwordNueva: 'Clave1234' }), 'VALIDACION', 'igual a la actual');
       assert.equal(await entrar('valida@kg.co', 'Clave1234'), 'SIN_ERROR', 'ningún intento inválido cambió la contraseña');
+    });
+
+    it('la regla del enunciado (mínimo 8, mayúscula, minúscula y número) también admite letras acentuadas', async () => {
+      await crearUsuario('acentos@kg.co');
+      const actor = await app.actorDe('acentos@kg.co');
+      assert.equal(await cambiar(actor, { passwordActual: 'Clave1234', passwordNueva: 'Ñandú2026' }), 'SIN_ERROR');
+      assert.equal(await entrar('acentos@kg.co', 'Ñandú2026'), 'SIN_ERROR');
     });
 
     it('una contraseña actual incorrecta cuenta como intento fallido y, al llegar al máximo, bloquea la cuenta', async () => {

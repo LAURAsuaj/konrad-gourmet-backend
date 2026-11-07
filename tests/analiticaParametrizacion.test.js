@@ -73,8 +73,12 @@ describe('Parametrización, analítica y auditoría', () => {
   });
 
   describe('Reglas del sistema (CU-04)', () => {
-    it('lista las 6 reglas y aplica los cambios a los demás módulos', async () => {
-      assert.equal((await E('reglas.listar', A.admin, {})).length, 6);
+    it('lista las 7 reglas (la imagen corporativa aunque no se haya guardado) y aplica los cambios a los demás módulos', async () => {
+      const reglas = await E('reglas.listar', A.admin, {});
+      assert.equal(reglas.length, 7);
+      const imagen = reglas.find((r) => r.clave === 'imagen_corporativa');
+      assert.equal(imagen.valor.nombreComercial, 'Konrad Gourmet');
+      assert.equal(imagen.actualizadoEn, null);
       assert.equal((await E('reglas.definir', A.admin, { clave: 'alarma_porcentaje', valor: 30 })).valor, 30);
       const { ParametroRepository } = await import('../src/domain/modules/parametrizacion/ParametroRepository.js');
       const { pool } = await import('../src/infrastructure/database/supabaseClient.js');
@@ -98,8 +102,63 @@ describe('Parametrización, analítica y auditoría', () => {
       assert.equal((await E('reglas.definir', A.admin, { clave: 'hora_descuento_diario', valor: '03:30' })).valor, '03:30');
       const rangos = await E('reglas.definir', A.admin, { clave: 'rangos_validacion_cotizacion', valor: { sospechosa_bajo: '0.8', opcionada_max: 1.05, rechazada_sobre: 1.2 } });
       assert.equal(rangos.valor.sospechosa_bajo, 0.8);
-      await E('reglas.definir', A.admin, { clave: 'rangos_validacion_cotizacion', valor: { sospechosa_bajo: 0.7, opcionada_max: 1.1, rechazada_sobre: 1.3 } });
+      await E('reglas.definir', A.admin, { clave: 'rangos_validacion_cotizacion', valor: { sospechosa_bajo: 0.5, opcionada_max: 1.25, rechazada_sobre: 1.25 } });
       await E('reglas.definir', A.admin, { clave: 'hora_descuento_diario', valor: '02:00' });
+    });
+  });
+
+  describe('Imagen corporativa parametrizable (interfaz gráfica)', () => {
+    const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const definir = (valor, actor = A.admin) => E('reglas.definir', actor, { clave: 'imagen_corporativa', valor });
+
+    it('sin configurar entrega la apariencia por defecto, sin necesidad de sesión', async () => {
+      const a = await app.facade.consultarApariencia();
+      assert.deepEqual([a.nombreComercial, a.colorPrimario, a.tipografia, a.logo], ['Konrad Gourmet', '#8B1E3F', 'sistema', null]);
+    });
+
+    it('el Administrador cambia nombre, colores, tipografía y textos; lo no indicado conserva su valor y los colores se normalizan', async () => {
+      const r = await definir({ nombreComercial: '  Konrad Lorenz Gourmet ', colorPrimario: '#1f6feb', tipografia: 'serif', textoBienvenida: 'Hola equipo' });
+      assert.deepEqual([r.valor.nombreComercial, r.valor.colorPrimario, r.valor.colorSecundario, r.valor.tipografia], ['Konrad Lorenz Gourmet', '#1F6FEB', '#C8A24A', 'serif']);
+      const a = await app.facade.consultarApariencia();
+      assert.deepEqual([a.nombreComercial, a.colorPrimario, a.textoBienvenida], ['Konrad Lorenz Gourmet', '#1F6FEB', 'Hola equipo']);
+      assert.ok(r.actualizadoEn);
+    });
+
+    it('rechaza colores, textos, tipografías, campos, contrastes y logos inválidos, y a quien no es Administrador', async () => {
+      const invalidos = [
+        { colorPrimario: 'rojo' }, { colorPrimario: '#FFF' }, { colorFondo: 12 }, { nombreComercial: '' }, { nombreComercial: 'a'.repeat(61) },
+        { textoBienvenida: '<script>alert(1)</script>' }, { eslogan: 5 }, { tipografia: 'comic' }, { campoInventado: 1 },
+        { colorTexto: '#CCCCCC', colorFondo: '#FFFFFF' }, // contraste insuficiente (WCAG 2.1 AA)
+        { logo: 'http://konrad.test/logo.png' }, { logo: 'javascript:alert(1)' }, { logo: 'https://usuario:clave@konrad.test/logo.png' }, { logo: 'no es una url' },
+        { logo: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' }, { logo: `data:image/png;base64,${'A'.repeat(80_000)}` }, { logo: 7 },
+        5, ['x'], 'texto',
+      ];
+      for (const valor of invalidos) {
+        assert.equal(await codigoDe(() => definir(valor)), 'VALIDACION', JSON.stringify(valor).slice(0, 90));
+      }
+      assert.equal(await codigoDe(() => definir({ nombreComercial: 'X' }, A.comercial)), 'PROHIBIDO');
+      assert.equal((await app.facade.consultarApariencia()).nombreComercial, 'Konrad Lorenz Gourmet', 'ningún intento inválido cambió la apariencia');
+    });
+
+    it('acepta un logo https o incrustado (png) y permite quitarlo; la auditoría no guarda la imagen completa', async () => {
+      assert.equal((await definir({ logo: 'https://konrad.test/logo.png' })).valor.logo, 'https://konrad.test/logo.png');
+      assert.equal((await definir({ logo: PNG })).valor.logo, PNG);
+      const [{ detalle }] = await app.q("SELECT detalle FROM auditoria WHERE entidad = 'regla' AND entidad_id = 'imagen_corporativa' ORDER BY fecha DESC, id DESC LIMIT 1");
+      assert.match(detalle.valor.logo, /^\[imagen incrustada de \d+ caracteres\]$/);
+      assert.equal((await definir({ logo: null })).valor.logo, null);
+    });
+
+    it('si lo guardado fuera inválido (edición directa de la base), se usa la apariencia por defecto', async () => {
+      await app.q(`UPDATE parametro SET valor = '{"colorPrimario": "x"}'::jsonb WHERE clave = 'imagen_corporativa'`);
+      assert.equal((await app.facade.consultarApariencia()).colorPrimario, '#8B1E3F');
+      await definir({}); // deja la apariencia por defecto
+    });
+
+    it('calcula el contraste según WCAG 2.1', async () => {
+      const { contraste } = await import('../src/domain/modules/parametrizacion/apariencia.js');
+      assert.ok(Math.abs(contraste('#000000', '#FFFFFF') - 21) < 0.01);
+      assert.ok(contraste('#767676', '#FFFFFF') >= 4.5, 'el gris #767676 es el más claro que cumple AA sobre blanco');
+      assert.ok(contraste('#777777', '#FFFFFF') < 4.5);
     });
   });
 
@@ -112,6 +171,36 @@ describe('Parametrización, analítica y auditoría', () => {
       }
       assert.equal(await codigoDe(() => E('tablero.consultar', A.jefe, {})), 'PROHIBIDO');
       assert.equal(await codigoDe(() => E('tablero.consultar', A.comercial, { desde: '2026-12-01', hasta: '2026-01-01' })), 'VALIDACION');
+    });
+
+    it('sin periodo indicado usa 30 días para la demanda y 365 para el proveedor; con periodo indicado, ese para los tres', async () => {
+      const { TableroBamService } = await import('../src/domain/modules/analitica/TableroBamService.js');
+      const llamadas = {};
+      const analitica = {
+        rankingProductos: async (p) => { llamadas.productos = p; return []; },
+        demandaPorPunto: async (p) => { llamadas.puntos = p; return []; },
+        estadisticasProveedores: async (p) => { llamadas.proveedores = p; return []; },
+      };
+      const servicio = new TableroBamService({
+        db: {}, analitica, parametros: { obtener: async () => ({ metrica: 'menor_razon_precio' }) },
+        registrador: { error: async () => {}, advertencia: async () => {} },
+      });
+      const dias = (fecha) => Math.round((Date.now() - fecha.getTime()) / 86_400_000);
+
+      const t = await servicio.consultarTablero(A.comercial);
+      assert.deepEqual([dias(llamadas.productos.desde), dias(llamadas.puntos.desde), dias(llamadas.proveedores.desde)], [30, 30, 365]);
+      assert.deepEqual([llamadas.productos.hasta, llamadas.puntos.hasta, llamadas.proveedores.hasta], [null, null, null], 'sin límite superior: incluye lo de hoy');
+      assert.deepEqual(
+        [t.productoMasDemandado.periodo.descripcion, t.restauranteMayorDemanda.periodo.descripcion, t.mejorProveedor.periodo.descripcion],
+        ['Últimos 30 días', 'Últimos 30 días', 'Último año (365 días)']
+      );
+      assert.deepEqual(t.periodo, { desde: null, hasta: null });
+
+      const t2 = await servicio.consultarTablero(A.comercial, { desde: '2026-01-01', hasta: '2026-02-01' });
+      for (const l of [llamadas.productos, llamadas.puntos, llamadas.proveedores]) {
+        assert.ok(l.desde.toISOString().startsWith('2026-01-01') && l.hasta.toISOString().startsWith('2026-02-0'));
+      }
+      assert.equal(t2.mejorProveedor.periodo.descripcion, 'Periodo indicado por el usuario');
     });
 
     describe('con datos', () => {
@@ -143,14 +232,20 @@ describe('Parametrización, analítica y auditoría', () => {
         await conOrden(ids.provB, 360_000);
       });
 
-      it('calcula producto más demandado, punto con mayor demanda y mejor proveedor', async () => {
+      it('calcula producto más demandado, punto con mayor demanda y mejor proveedor (por defecto, el de mejores precios)', async () => {
         const t = await E('tablero.consultar', A.comercial, {});
         assert.equal(t.productoMasDemandado.producto, 'Arroz');
         assert.deepEqual([t.productoMasDemandado.consumoPedidos, t.productoMasDemandado.cantidadSolicitada, t.productoMasDemandado.demanda], [14, 300, 314]);
         assert.equal(t.productoMasDemandado.ranking[1].producto, 'Pollo');
         assert.equal(t.productoMasDemandado.ranking[1].demanda, 21);
         assert.deepEqual([t.restauranteMayorDemanda.punto, t.restauranteMayorDemanda.platosVendidos], ['Chapinero', 60]);
-        assert.deepEqual([t.mejorProveedor.metrica, t.mejorProveedor.proveedor, t.mejorProveedor.valorMetrica], ['ordenes_compra', 'Proveedor A', 2]);
+        assert.deepEqual([t.mejorProveedor.metrica, t.mejorProveedor.proveedor], ['menor_razon_precio', 'Proveedor B'], 'el enunciado pide el proveedor con los mejores precios');
+        assert.ok(!('valorMetrica' in t.mejorProveedor));
+
+        await E('reglas.definir', A.admin, { clave: 'criterio_mejor_proveedor', valor: { metrica: 'ordenes_compra' } });
+        const porOrdenes = (await E('tablero.consultar', A.comercial, {})).mejorProveedor;
+        assert.deepEqual([porOrdenes.metrica, porOrdenes.proveedor, porOrdenes.valorMetrica], ['ordenes_compra', 'Proveedor A', 2]);
+        await E('reglas.definir', A.admin, { clave: 'criterio_mejor_proveedor', valor: { metrica: 'menor_razon_precio' } });
       });
 
       it('el criterio parametrizado cambia el mejor proveedor, sin exponer montos ni razones de precio', async () => {
@@ -167,9 +262,9 @@ describe('Parametrización, analítica y auditoría', () => {
 
       it('un criterio inválido usa el predeterminado y deja una advertencia', async () => {
         await app.q(`UPDATE parametro SET valor = '{"metrica":"xx"}'::jsonb WHERE clave = 'criterio_mejor_proveedor'`);
-        assert.equal((await E('tablero.consultar', A.comercial, {})).mejorProveedor.metrica, 'ordenes_compra');
+        assert.equal((await E('tablero.consultar', A.comercial, {})).mejorProveedor.metrica, 'menor_razon_precio');
         assert.equal((await app.q("SELECT 1 FROM log_error WHERE nivel = 'WARN' AND modulo = 'tablero_bam'")).length, 1);
-        await E('reglas.definir', A.admin, { clave: 'criterio_mejor_proveedor', valor: { metrica: 'ordenes_compra' } });
+        await E('reglas.definir', A.admin, { clave: 'criterio_mejor_proveedor', valor: { metrica: 'menor_razon_precio' } });
       });
 
       it('un periodo sin actividad deja los indicadores sin datos', async () => {

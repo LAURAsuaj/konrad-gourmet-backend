@@ -91,7 +91,7 @@ docs/                Documentación
 |---|---|
 | [Instalación](docs/INSTALACION.md) | Cómo poner el proyecto a funcionar paso a paso |
 | [Configuración](docs/CONFIGURACION.md) | Variables de entorno, reglas del sistema y catálogos |
-| [Referencia de la API](docs/API.md) | Las 42 rutas, sus permisos y ejemplos reales |
+| [Referencia de la API](docs/API.md) | Las 43 rutas, sus permisos y ejemplos reales |
 | [Flujos de negocio](docs/FLUJOS.md) | Cómo funcionan cocina, inventario, compras y procesos automáticos |
 | [Arquitectura](docs/ARQUITECTURA.md) | Capas, patrones, eventos, modelo de datos y decisiones de diseño |
 | [Despliegue y operación](docs/DESPLIEGUE.md) | Docker, TLS, lista de verificación para producción y resolución de problemas |

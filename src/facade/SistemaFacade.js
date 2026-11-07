@@ -133,6 +133,11 @@ export class SistemaFacade {
     return usuario;
   }
 
+  /** Imagen corporativa para pintar la interfaz (pública: la necesita la pantalla de inicio de sesión). */
+  async consultarApariencia() {
+    return this.#m.parametrizacion.consultarApariencia();
+  }
+
   async verificarSalud() {
     try {
       await this.#db.query('SELECT 1');
