@@ -69,10 +69,11 @@ El servicio se consume por **SOAP 1.2** con el contrato de SIPSA (DANE); ver [Ar
 | Variable | Obligatoria | Valor por defecto | Descripción |
 |---|---|---|---|
 | `MINCOMERCIO_API_URL` | No | — | Dirección del servicio SOAP (el `soap12:address` de su WSDL). Debe ser HTTPS; solo se admite HTTP hacia localhost fuera de producción, o con `MINCOMERCIO_PERMITIR_HTTP`. |
-| `MINCOMERCIO_TIMEOUT_MS` | No | `20000` | Tiempo máximo de espera de la consulta, en milisegundos. La respuesta trae la tabla completa de precios, que puede ser grande. |
+| `MINCOMERCIO_TIMEOUT_MS` | No | `60000` | Tiempo máximo, en milisegundos, sin recibir datos del servicio. El servicio real del DANE tarda unos 17 segundos en empezar a responder; el tiempo total de la consulta tiene un tope de tres veces este valor. |
+| `MINCOMERCIO_VENTANA_DIAS` | No | `14` | Días de precios que se guardan, contados desde el dato más reciente. El servicio entrega todo su historial (más de 20 MB) del más nuevo al más antiguo, y el sistema corta la lectura al salir de esta ventana. |
 | `MINCOMERCIO_CIUDAD` | No | — (todas) | Ciudad de la que se toma el precio (por ejemplo `Bogotá`; sin distinguir tildes ni mayúsculas). Vacío: promedio de todas las ciudades. |
 | `MINCOMERCIO_PERMITIR_HTTP` | No | `false` | `true` autoriza consumir el servicio por `http://` sin cifrar. Es una excepción al requisito de HTTPS: úsela solo si el servicio real no responde por HTTPS (son datos públicos, sin credenciales) y déjelo documentado. |
-| `MINCOMERCIO_CACHE_MINUTOS` | No | `360` | Minutos que se conserva en memoria la tabla de precios antes de pedirla de nuevo. |
+| `MINCOMERCIO_CACHE_MINUTOS` | No | `360` | Minutos que se conserva en memoria la tabla de precios de la ventana antes de pedirla de nuevo. |
 
 ### Correo electrónico (SMTP)
 

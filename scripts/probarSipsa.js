@@ -1,19 +1,19 @@
 /**
  * Prueba el servicio SOAP de precios configurado en MINCOMERCIO_API_URL (el real del DANE o el
- * simulador) y explica qué entrega, SIN descargar respuestas gigantes: lee solo el principio.
+ * simulador) con las mismas clases que usa el sistema, sin descargar respuestas gigantes.
  *
  * Ejecutar directamente con node (en PowerShell, "npm run ... -- --opcion" pierde las opciones):
- *   node scripts/probarSipsa.js                          inspecciona el servicio y consulta Arroz, Pollo, Papa y Carne
+ *   node scripts/probarSipsa.js                          lee la definición del servicio y consulta Arroz, Pollo, Papa y Carne
  *   node scripts/probarSipsa.js Arroz Pollo Yuca         consulta esos productos
- *   node scripts/probarSipsa.js --crudo                  muestra además el principio de la respuesta SOAP sin interpretar
+ *   node scripts/probarSipsa.js --inspeccion             además analiza el orden y el contenido del principio de la respuesta
+ *   node scripts/probarSipsa.js --crudo                  (implica --inspeccion) muestra el principio de la respuesta SOAP sin interpretar
  *   node scripts/probarSipsa.js --operacion=promediosSipsaParcial   inspecciona otra operación del servicio
- *   node scripts/probarSipsa.js --max-kb=1000            cuánto leer de la respuesta para inspeccionarla (300 por defecto)
- *   node scripts/probarSipsa.js --completo               fuerza la consulta completa aunque la respuesta sea grande (límite 20 MB)
+ *   node scripts/probarSipsa.js --max-kb=1000            cuánto leer en la inspección (300 por defecto)
  *
  * Qué hace: (1) lee el XSD del servicio y muestra los parámetros de entrada de la operación;
- * (2) llama la operación y analiza el principio de la respuesta (registros, fechas, ciudades,
- * productos); (3) si la respuesta es pequeña, o con --completo, consulta los precios con el
- * adaptador del sistema.
+ * (2) con --inspeccion, llama la operación y analiza el principio de la respuesta;
+ * (3) consulta los precios con el adaptador del sistema, que lee la respuesta en flujo y corta al
+ * salir de la ventana de MINCOMERCIO_VENTANA_DIAS días, e informa cuánto leyó y qué productos hay.
  */
 import https from 'node:https';
 import http from 'node:http';
@@ -30,7 +30,8 @@ const operacion = valorDe('operacion', 'promediosSipsaCiudad');
 const maxBytes = Math.max(10, Number(valorDe('max-kb', 300)) || 300) * 1024;
 const productos = (nombres.length ? nombres : ['Arroz', 'Pollo', 'Papa', 'Carne']).map((nombre, i) => ({ id: String(i + 1), nombre, unidad: 'kg' }));
 
-const { baseUrl, ciudad, permitirHttp, cacheMinutos, timeoutMs } = env.ministerio;
+const inspeccion = bandera('inspeccion') || bandera('crudo');
+const { baseUrl, ciudad, permitirHttp, cacheMinutos, timeoutMs, ventanaDias } = env.ministerio;
 const HOSTS_LOCALES = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
 /** Lee hasta `maxBytes` de la respuesta y corta la conexión (sirve con respuestas de cientos de MB). */
@@ -99,11 +100,9 @@ console.log(`  URL:              ${baseUrl || '(sin configurar: defina MINCOMERC
 console.log(`  Operación:        ${operacion}`);
 console.log(`  Ciudad:           ${ciudad || '(todas: se promedia entre ciudades)'}`);
 console.log(`  HTTP sin cifrar:  ${permitirHttp ? 'permitido (MINCOMERCIO_PERMITIR_HTTP=true)' : 'no permitido (solo HTTPS)'}`);
-console.log(`  Espera máxima:    ${timeoutMs} ms | lectura de inspección: ${formatoBytes(maxBytes)}\n`);
+console.log(`  Espera máxima:    ${timeoutMs} ms | ventana de datos: ${ventanaDias} días | datos en memoria: ${cacheMinutos} min\n`);
 
 if (!baseUrl) { console.error('FALLÓ: falta MINCOMERCIO_API_URL en el .env'); process.exit(1); }
-
-let respuestaCompletaPequena = false;
 
 // ---- 1) XSD: parámetros de entrada ----
 console.log('1) Definición del servicio (XSD)');
@@ -115,8 +114,9 @@ try {
   console.log(`  No se pudo leer el XSD: ${error.message}`);
 }
 
-// ---- 2) Respuesta: inspección ligera ----
-console.log(`\n2) Respuesta de ${operacion} (se lee solo el principio)`);
+// ---- 2) Respuesta: inspección ligera (solo con --inspeccion) ----
+if (inspeccion) {
+console.log(`\n2) Respuesta de ${operacion} (se lee solo el principio: ${formatoBytes(maxBytes)})`);
 try {
   const r = await leerInicio({
     url: baseUrl, metodo: 'POST', limite: maxBytes,
@@ -127,7 +127,6 @@ try {
   console.log(`  HTTP ${r.estado} | primer byte a los ${((r.msPrimerByte ?? r.ms) / 1000).toFixed(2)} s | ${formatoBytes(r.bytes)} leídos en ${(r.ms / 1000).toFixed(2)} s | tipo: ${r.cabeceras['content-type'] ?? '?'} | tamaño declarado: ${r.cabeceras['content-length'] ? formatoBytes(Number(r.cabeceras['content-length'])) : 'no informado (respuesta por partes)'}`);
   if (r.completa) {
     console.log(`  Respuesta COMPLETA: ${formatoBytes(r.bytes)}, ${registros.length} registros.`);
-    respuestaCompletaPequena = true;
   } else {
     const porRegistro = registros.length ? r.bytes / registros.length : 0;
     console.log(`  La respuesta es MAYOR que ${formatoBytes(r.bytes)} (se cortó la lectura a propósito).`);
@@ -174,23 +173,23 @@ try {
   console.log(`  FALLÓ: ${error.message}`);
   process.exitCode = 1;
 }
+}
 
-// ---- 3) Consulta de precios con el adaptador del sistema ----
+// ---- 3) Consulta de precios con el adaptador del sistema (lee en flujo y corta al salir de la ventana) ----
 if (operacion !== 'promediosSipsaCiudad') process.exit();
-if (!respuestaCompletaPequena && !bandera('completo')) {
-  console.log('\n3) Consulta de precios con el adaptador: OMITIDA porque la respuesta es grande (use --completo para intentarla; límite 20 MB).');
-} else {
-  console.log('\n3) Consulta de precios con el adaptador del sistema');
-  try {
-    const adaptador = new MinisterioComercioAdapter();
-    const inicio = Date.now();
-    const resumen = await adaptador.resumenDeTabla({ forzar: true });
-    console.log(`  OK en ${((Date.now() - inicio) / 1000).toFixed(2)} s: ${resumen.registros} registros, ${resumen.productos} productos distintos, ${resumen.ciudades.length} ciudades.`);
-    console.log(`  Fecha de captura más reciente: ${resumen.fechaMasReciente ?? '(sin fechas)'}`);
-    console.log('  Precio sugerido por kilogramo:');
-    (await adaptador.consultarPrecios(productos)).forEach((p, i) => console.log(`    ${productos[i].nombre.padEnd(22)} ${p.precioSugerido === null ? `sin precio (${p.motivo})` : p.precioSugerido}`));
-  } catch (error) {
-    console.error(`  FALLÓ: ${error.message}${error.codigo ? ` [${error.codigo}${error.estado ? ` | HTTP ${error.estado}` : ''}]` : ''}`);
-    process.exitCode = 1;
-  }
+console.log(`\n3) Consulta de precios con el adaptador del sistema (ventana de ${ventanaDias} días)`);
+try {
+  const adaptador = new MinisterioComercioAdapter();
+  const inicio = Date.now();
+  const resumen = await adaptador.resumenDeTabla({ forzar: true });
+  console.log(`  OK en ${((Date.now() - inicio) / 1000).toFixed(2)} s: leyó ${formatoBytes(resumen.bytesLeidos)} y guardó ${resumen.registros} registros de ${resumen.productos} productos y ${resumen.ciudades.length} ciudades.`);
+  console.log(`  Datos desde ${resumen.fechaMasAntigua?.slice(0, 10) ?? '?'} hasta ${resumen.fechaMasReciente?.slice(0, 10) ?? '?'} | cortó por ${resumen.detenidaPorVentana ? 'llegar a fechas fuera de la ventana (lo esperado)' : resumen.truncada ? 'el tope de tamaño' : 'terminar la respuesta completa'}.`);
+  console.log(`  Ciudades: ${resumen.ciudades.join(' · ')}`);
+  console.log(`  Productos que ofrece el servicio (${resumen.productos}):\n    ${resumen.nombresDeProductos.join(' · ')}`);
+  console.log('\n  Precio sugerido por kilogramo:');
+  (await adaptador.consultarPrecios(productos)).forEach((p, i) => console.log(`    ${productos[i].nombre.padEnd(22)} ${p.precioSugerido === null ? `sin precio (${p.motivo})` : p.precioSugerido}`));
+} catch (error) {
+  console.error(`  FALLÓ: ${error.message}${error.codigo ? ` [${error.codigo}${error.estado ? ` | HTTP ${error.estado}` : ''}]` : ''}`);
+  if (error.codigo === 'TIMEOUT') console.error('  Suba MINCOMERCIO_TIMEOUT_MS en el .env (el servicio real tarda ~17 s en empezar a responder).');
+  process.exitCode = 1;
 }

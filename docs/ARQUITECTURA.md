@@ -119,14 +119,32 @@ Garantías que da la base de datos: `auditoria` y `log_error` no admiten `UPDATE
 
 ## Servicio de precios del Ministerio (supuesto documentado)
 
-El enunciado menciona un servicio web del Ministerio de Comercio que devuelve valores estandarizados por producto, y exige SOAP para la integración con sistemas externos. No existe un servicio público con ese nombre; se **supone** que su contrato es el del servicio SOAP 1.2 de **SIPSA (DANE)**, público y gratuito, cuyo método `promediosSipsaCiudad` devuelve el precio promedio de cada producto por ciudad. Se eligió porque es SOAP (cumple el requisito), es real y está documentado.
+El enunciado menciona un servicio web del Ministerio de Comercio que devuelve valores estandarizados por producto, y exige SOAP para la integración con sistemas externos. No existe un servicio público con ese nombre; se **supone** que su contrato es el del servicio SOAP 1.2 de **SIPSA (DANE)**, público y gratuito, cuyo método `promediosSipsaCiudad` devuelve el precio promedio de cada producto por ciudad y día. Se eligió porque es SOAP (cumple el requisito), es real y está documentado.
 
-- **Dónde:** `MinisterioComercioAdapter` (implementa `IPrecioSugeridoService`) sobre un cliente SOAP 1.2 propio (`soap.js`). El dominio no cambia: depende solo del contrato.
-- **Cómo consulta:** el servicio no busca por producto, entrega la tabla completa. El adaptador la pide una vez, la guarda en memoria (`MINCOMERCIO_CACHE_MINUTOS`) y responde cada producto desde ella; si el servicio falla y hay datos guardados, los usa.
+**Lo que se comprobó contra el servicio real (noviembre de 2026, con `node scripts/probarSipsa.js`):**
+
+- Responde por HTTPS y no usa credenciales.
+- La operación no recibe parámetros: no permite pedir un producto, una ciudad ni un rango de fechas.
+- Entrega todo su historial (más de 20 MB), tarda unos 17 segundos en empezar a responder y ordena los registros del más reciente al más antiguo (en 76 cambios de fecha observados, ninguno iba hacia fechas más nuevas).
+- Ofrece 33 productos en 20 ciudades, con datos hasta el día en curso. Son solo frutas, verduras y tubérculos: Aguacate, Ahuyama, Arracacha, Arveja verde en vaina, Banano, Cebolla cabezona blanca, Cebolla junca, Chócolo mazorca, Coco, Granadilla, Guayaba, Habichuela, Limón Común, Limón Tahití, Lulo, Mandarina, Mango tommy, Maracuyá, Mora de Castilla, Naranja, Papa criolla, Papa negra, Papaya maradol, Pepino cohombro, Pimentón, Piña, Plátano guineo, Plátano hartón verde, Remolacha, Tomate de árbol, Tomate, Yuca y Zanahoria. **No incluye granos, cereales ni carnes** (por ejemplo Arroz, Frijol, Pollo, Res), que quedan sin precio sugerido.
+- Resultado de la prueba real: Papa 3.454,71, Cebolla 1.860,24 y Tomate 3.500,44 por kilogramo, con 847 KB leídos en 22 segundos.
+
+**Cómo lo consume el sistema:** `MinisterioComercioAdapter` (implementa `IPrecioSugeridoService`) sobre un cliente SOAP 1.2 propio (`soap.js`). El dominio no cambia: depende solo del contrato.
+
+- **Lectura en flujo con ventana:** como no se puede filtrar, la respuesta se lee por partes, cada registro se interpreta al llegar y la conexión se cierra cuando se pasa de la ventana de `MINCOMERCIO_VENTANA_DIAS` días respecto del dato más reciente. Así se leen unos pocos cientos de KB en lugar de más de 20 MB. Hay además un tope de tamaño de lectura como protección.
+- **Memoria:** la tabla de la ventana se guarda en memoria (`MINCOMERCIO_CACHE_MINUTOS`); varias consultas simultáneas comparten una sola llamada, y si el servicio falla se usan los datos guardados aunque estén vencidos. La primera consulta tras arrancar tarda lo que tarde el servicio en responder, y el cálculo del precio ocurre en segundo plano (evento), sin bloquear al usuario.
 - **Cómo asocia productos:** por nombre, sin distinguir tildes ni mayúsculas: coincidencia exacta; si no, nombres que empiezan por el pedido; si no, nombres que contienen todas sus palabras. Con varias variantes («Arroz de primera», «Arroz segunda») promedia el dato más reciente de cada una y de cada ciudad, o solo de `MINCOMERCIO_CIUDAD` si se configuró.
 - **Unidades:** los precios son por kilogramo; se convierten a gramo y libra. Otra unidad responde `UNIDAD_NO_SOPORTADA`.
 - **Alcance de los datos reales:** SIPSA publica precios mayoristas agrícolas; un producto que no exista en su tabla queda sin precio sugerido (`SIN_PRECIO`).
-- **Para la demostración:** `scripts/mockServicios.js` simula el servicio con el mismo contrato (WSDL incluido), de modo que el sistema funciona sin internet. Cambiar al servicio real es cambiar `MINCOMERCIO_API_URL`.
+- **Para la demostración:** `scripts/mockServicios.js` simula el servicio con el mismo contrato (WSDL incluido, historial de 20 días ordenado como el real, y `--demora=<s>` para imitar su lentitud), de modo que el sistema funciona sin internet. Su lista de 23 productos agrega granos y proteínas (Arroz, Frijol, Pollo, Carne, Repollo...) para cubrir el menú de un restaurante y los ejemplos del enunciado. Cambiar al servicio real es cambiar `MINCOMERCIO_API_URL`; con él, una solicitud que incluya un producto sin precio queda con el valor total sugerido incompleto y sus cotizaciones no se validan automáticamente.
+
+## API de redes sociales (supuesto documentado)
+
+El enunciado pide identificar comportamientos de las redes sociales para ofrecer productos. Instagram, TikTok y X no ofrecen una API pública gratuita de tendencias, y la de Google Trends sigue en fase alfa con acceso limitado; por eso se **supone** una API REST de tendencias con un contrato propio (el que describe `RedesSocialesAdapter`) y la demostración usa un simulador del mismo contrato (`scripts/mockServicios.js`).
+
+- **Contrato:** `GET /tendencias?categoria=gastronomia&pais=CO&limite=<n>` con `Authorization: Bearer`; responde términos con fuente y puntaje. El adaptador deja un solo registro por término (el de mayor puntaje) y los ordena de mayor a menor.
+- **Cómo se usan:** `PromocionService` une cada tendencia con un producto cuando el nombre de uno contiene al otro: producto muy solicitado que además es tendencia genera una promoción `COMBINADA`; las tendencias sin producto generan promociones solo de tendencia (máximo 2). Si la API no está disponible se promocionan solo los productos más solicitados.
+- **Datos reales posibles:** la API de YouTube Data v3 (oficial, con clave gratuita) permitiría contar qué productos aparecen en los videos de comida más vistos. No se implementó: sería un adaptador adicional con el mismo contrato `ITendenciasService`, sin cambios en el dominio.
 
 ## Limitaciones conocidas
 
@@ -135,6 +153,6 @@ El enunciado menciona un servicio web del Ministerio de Comercio que devuelve va
 - No hay recuperación de contraseña por correo: la restablece el Administrador.
 - Las notificaciones no tienen estado de lectura (leída o no leída): eso requeriría una columna nueva en la base de datos.
 - Las alarmas no se empujan: la aplicación debe consultarlas.
-- El servicio de precios del Ministerio se probó con la guía y el WSDL públicos del DANE y con un simulador del mismo contrato, **no contra el servicio en vivo**; los parámetros de entrada de `promediosSipsaCiudad` no vienen en el WSDL y se asumió que no tiene. `npm run sipsa:probar` lo comprueba contra el servicio real.
+- El servicio de precios del DANE se comprobó en vivo (formato, orden y ausencia de parámetros), pero su comportamiento puede cambiar; `node scripts/probarSipsa.js` permite repetir la comprobación. Sus productos son solo agrícolas mayoristas.
 - El adaptador de redes sociales asume un formato de respuesta (descrito en el adaptador) que debe confirmarse con la API real.
 - Este repositorio es solo el backend: no incluye el frontend.

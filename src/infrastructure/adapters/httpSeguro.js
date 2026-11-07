@@ -8,6 +8,7 @@
  */
 import https from 'node:https';
 import http from 'node:http';
+import { StringDecoder } from 'node:string_decoder';
 import { env } from '../../config/env.js';
 import {
   ServicioExternoError,
@@ -148,4 +149,129 @@ export async function solicitarJson({ servicio, url, metodo = 'GET', cabeceras =
   } catch {
     throw new ServicioExternoError(servicio, CODIGOS.RESPUESTA_INVALIDA, 'La respuesta no es JSON válido');
   }
+}
+
+/**
+ * Como solicitarTexto, pero entrega la respuesta POR PARTES a `alRecibir(texto, bytesAcumulados)`
+ * en lugar de acumularla: sirve para respuestas de cientos de MB de las que solo interesa el
+ * principio. Si `alRecibir` devuelve `false` se corta la conexión (sin leer el resto). Una respuesta
+ * con código distinto de 2xx no se entrega por partes: se acumula (hasta 1 MB) y se devuelve en `texto`.
+ * Además del tiempo de inactividad (`timeoutMs`) hay un plazo total (`plazoTotalMs`).
+ *
+ * @param {{servicio: string, url: URL|string, metodo?: string, cabeceras?: object, cuerpo?: string|null,
+ *          timeoutMs: number, plazoTotalMs?: number, permitirHttp?: boolean,
+ *          alRecibir: (texto: string, bytes: number) => boolean|void}} opciones
+ * @returns {Promise<{estado: number, completa: boolean, bytes: number, texto: string|null}>}
+ *          `completa` es false si se cortó porque `alRecibir` devolvió false
+ * @throws {ServicioExternoError}
+ */
+export function solicitarEnFlujo({
+  servicio,
+  url,
+  metodo = 'GET',
+  cabeceras = {},
+  cuerpo = null,
+  timeoutMs,
+  plazoTotalMs = timeoutMs * 3,
+  permitirHttp = false,
+  alRecibir,
+}) {
+  return new Promise((resolve, reject) => {
+    let destino;
+    try {
+      destino = url instanceof URL ? url : new URL(url);
+    } catch {
+      reject(new ServicioExternoError(servicio, CODIGOS.CONFIGURACION, 'La URL del servicio no es válida'));
+      return;
+    }
+    const esHttps = destino.protocol === 'https:';
+    const httpPermitido =
+      destino.protocol === 'http:' && (permitirHttp || (!env.esProduccion && HOSTS_LOCALES.has(destino.hostname)));
+    if (!esHttps && !httpPermitido) {
+      reject(
+        new ServicioExternoError(servicio, CODIGOS.CONFIGURACION, 'El servicio debe consumirse por HTTPS con TLS (CO-6)')
+      );
+      return;
+    }
+
+    let terminado = false;
+    let plazo = null;
+    const terminar = (accion, valor) => {
+      if (terminado) return;
+      terminado = true;
+      clearTimeout(plazo);
+      accion(valor);
+    };
+
+    const peticion = (esHttps ? https : http).request(
+      destino,
+      {
+        method: metodo,
+        agent: esHttps ? agenteTls : undefined,
+        timeout: timeoutMs,
+        headers: { ...(cuerpo ? { 'Content-Length': Buffer.byteLength(cuerpo) } : {}), ...cabeceras },
+      },
+      (respuesta) => {
+        const estado = respuesta.statusCode;
+        const exitosa = estado >= 200 && estado < 300;
+        const decodificador = new StringDecoder('utf8'); // no parte un carácter con tilde entre dos partes
+        const acumulado = [];
+        let bytes = 0;
+
+        respuesta.on('data', (parte) => {
+          if (terminado) return;
+          bytes += parte.length;
+          if (!exitosa) {
+            if (bytes > LIMITE_RESPUESTA_BYTES) {
+              peticion.destroy(
+                new ServicioExternoError(servicio, CODIGOS.RESPUESTA_INVALIDA, 'La respuesta excede el tamaño permitido')
+              );
+              return;
+            }
+            acumulado.push(parte);
+            return;
+          }
+          try {
+            if (alRecibir(decodificador.write(parte), bytes) === false) {
+              terminar(resolve, { estado, completa: false, bytes, texto: null });
+              peticion.destroy();
+            }
+          } catch (error) {
+            terminar(reject, normalizar(servicio, error));
+            peticion.destroy();
+          }
+        });
+        respuesta.on('error', (error) => terminar(reject, normalizar(servicio, error)));
+        respuesta.on('end', () => {
+          if (terminado) return;
+          if (!exitosa) {
+            terminar(resolve, { estado, completa: true, bytes, texto: Buffer.concat(acumulado).toString('utf8') });
+            return;
+          }
+          try {
+            const resto = decodificador.end();
+            if (resto) alRecibir(resto, bytes);
+            terminar(resolve, { estado, completa: true, bytes, texto: null });
+          } catch (error) {
+            terminar(reject, normalizar(servicio, error));
+          }
+        });
+      }
+    );
+
+    plazo = setTimeout(() => {
+      peticion.destroy(
+        new ServicioExternoError(servicio, CODIGOS.TIMEOUT, `El servicio no terminó de responder en ${plazoTotalMs} ms`)
+      );
+    }, plazoTotalMs);
+    peticion.on('timeout', () => {
+      peticion.destroy(
+        new ServicioExternoError(servicio, CODIGOS.TIMEOUT, `El servicio no respondió en ${timeoutMs} ms`)
+      );
+    });
+    peticion.on('error', (error) => terminar(reject, normalizar(servicio, error)));
+
+    if (cuerpo) peticion.write(cuerpo);
+    peticion.end();
+  });
 }

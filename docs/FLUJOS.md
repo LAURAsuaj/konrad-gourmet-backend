@@ -91,7 +91,7 @@ El Jefe de Cocina indica categoría, producto, cantidad, unidad y, opcionalmente
 - Si el servicio falla, los precios obtenidos se conservan y solo se reintenta lo que falta: automáticamente con espera creciente, y después con el proceso programado `reintentar_precios` (cada 30 minutos por defecto).
 - El `valorTotalSugerido` de la solicitud se llena solo cuando **todos** sus alimentos tienen precio.
 - Un producto que el Ministerio no conoce, con un valor inválido o en una unidad que no se puede convertir, queda registrado en el log de errores.
-- El servicio entrega la tabla completa de precios por producto y ciudad (por kilogramo). El sistema la consulta una vez, la conserva en memoria y busca cada producto por su nombre sin distinguir tildes ni mayúsculas; convierte el precio a gramo o libra según la unidad solicitada. El detalle está en [Arquitectura](ARQUITECTURA.md#servicio-de-precios-del-ministerio-supuesto-documentado).
+- El servicio no permite filtrar: entrega todo su historial de precios por producto, ciudad y día (por kilogramo), del más reciente al más antiguo. El sistema lee solo la ventana de días más reciente, la conserva en memoria y busca cada producto por su nombre sin distinguir tildes ni mayúsculas; convierte el precio a gramo o libra según la unidad solicitada. Con el servicio real la primera consulta tarda unos 20 segundos, en segundo plano. El detalle está en [Arquitectura](ARQUITECTURA.md#servicio-de-precios-del-ministerio-supuesto-documentado).
 
 ### Solicitud de cotización a proveedores
 

@@ -136,19 +136,22 @@ REDES_API_URL=http://127.0.0.1:4010
 REDES_API_TOKEN=token-de-prueba
 ```
 
-El simulador imita al servicio SOAP de SIPSA (DANE): publica su WSDL en la misma dirección con `?WSDL` y responde la operación `promediosSipsaCiudad` con 22 productos de nombres al estilo SIPSA en 4 ciudades. Pedir `Arroz` devuelve 4.500 (promedio de «Arroz de primera» y «Arroz segunda»), `Pollo` 12.000, `Papa` 3.200 y `Carne` 28.000, por kilogramo. Un producto que no esté en su lista (por ejemplo `Chocolate`) no tiene precio, como pasaría con el servicio real. Solo sirve para desarrollo.
+El simulador imita al servicio SOAP de SIPSA (DANE): publica su WSDL en la misma dirección con `?WSDL` y responde la operación `promediosSipsaCiudad` con 23 productos de nombres al estilo SIPSA en 4 ciudades y un historial de 20 días. Pedir `Arroz` devuelve 4.500 (promedio de «Arroz de primera» y «Arroz segunda»), `Pollo` 12.000, `Papa` 3.200 y `Carne` 28.000, por kilogramo. Un producto que no esté en su lista (por ejemplo `Chocolate`) no tiene precio, como pasaría con el servicio real. Solo sirve para desarrollo.
 
-**Comprobar el servicio de precios.** Con la URL configurada, este comando inspecciona el servicio sin descargar respuestas gigantes: lee su definición (XSD) para mostrar los parámetros de entrada, analiza el principio de la respuesta (registros, fechas, ciudades, productos) y, si la respuesta es pequeña, consulta el precio de algunos productos con las mismas clases del sistema:
+El mismo simulador entrega las **tendencias de redes sociales** (`GET /tendencias`, con `Authorization: Bearer`): 28 términos de gastronomía en 4 fuentes (Instagram, TikTok, YouTube y X) con puntaje, variación frente al día anterior y número de menciones. Los puntajes cambian cada día y son iguales durante todo el día, de modo que la demostración es repetible. Algunos términos contienen productos del menú («Arroz con coco», «Pollo al curry», «Papas rústicas») y generan promociones combinadas con los más solicitados; otros no («Brownie vegano») y generan promociones solo de tendencia. Para mostrar qué pasa cuando la API de redes no está disponible, inícielo con `node scripts/mockServicios.js --redes-caidas`: las tendencias responden 503 y el sistema promociona solo los productos más solicitados (el servicio de precios sigue funcionando). Con `--demora=17` imita la lentitud del servicio de precios real.
+
+**Comprobar el servicio de precios.** Con la URL configurada, este comando lee la definición del servicio (muestra sus parámetros de entrada) y consulta el precio de algunos productos con las mismas clases del sistema. Informa cuántos bytes leyó, cuántos registros guardó, de qué fechas, cuántos productos y ciudades ofrece y cómo se llaman los productos:
 
 ```bash
 node scripts/probarSipsa.js
 node scripts/probarSipsa.js Arroz Pollo Yuca
+node scripts/probarSipsa.js --inspeccion
 node scripts/probarSipsa.js --crudo
 ```
 
-`--crudo` muestra además el principio de la respuesta SOAP sin interpretar; `--operacion=<nombre>` inspecciona otra operación del servicio; `--completo` fuerza la consulta completa aunque la respuesta sea grande (límite de 20 MB). Ejecute el script directamente con `node`: en PowerShell, `npm run sipsa:probar -- --crudo` pierde las opciones.
+`--inspeccion` analiza además el orden y el contenido del principio de la respuesta; `--crudo` incluye ese análisis y muestra el principio de la respuesta SOAP sin interpretar; `--operacion=<nombre>` inspecciona otra operación del servicio. Ejecute el script directamente con `node`: en PowerShell, `npm run sipsa:probar -- --crudo` pierde las opciones. Con el servicio real la prueba tarda cerca de 20 segundos porque el servicio tarda en empezar a responder.
 
-**Servicio real del DANE (opcional).** Su WSDL está en `http://appweb.dane.gov.co/sipsaWS/SrvSipsaUpraBeanService?WSDL`. Pruebe primero con `https://` en lugar de `http://` en `MINCOMERCIO_API_URL`; si solo responde por `http://`, agregue `MINCOMERCIO_PERMITIR_HTTP=true` y documente la excepción (ver [Configuración](CONFIGURACION.md#ministerio-de-comercio-servicio-soap-de-precios-precio-sugerido)). Sus precios son mayoristas agrícolas por kilogramo y no incluyen todos los productos de un restaurante: los que no existan quedan sin precio sugerido.
+**Servicio real del DANE (opcional).** Su WSDL está en `http://appweb.dane.gov.co/sipsaWS/SrvSipsaUpraBeanService?WSDL`, pero el servicio también responde por HTTPS, que es lo que debe usar: `MINCOMERCIO_API_URL=https://appweb.dane.gov.co/sipsaWS/SrvSipsaUpraBeanService` (`MINCOMERCIO_PERMITIR_HTTP` queda en `false`). Sus precios son mayoristas agrícolas por kilogramo y no incluyen todos los productos de un restaurante: los que no existan quedan sin precio sugerido. Ejecute `node scripts/probarSipsa.js` para ver la lista de productos que ofrece.
 
 **Correo: buzón de pruebas.** Cree una cuenta gratuita en <https://ethereal.email> (recibe los correos y no los entrega a nadie) y complete:
 

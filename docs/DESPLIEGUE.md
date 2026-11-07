@@ -114,7 +114,7 @@ Marque cada punto antes de salir:
 **Servicios externos**
 
 - [ ] SMTP real (`SMTP_*`) y remitente (`CORREO_REMITENTE`); probado el envío de una cotización.
-- [ ] Servicio de precios real: `MINCOMERCIO_API_URL` apuntando al servicio SOAP y `npm run sipsa:probar` ejecutado con éxito contra él (registros, ciudades y precios de sus productos). Si el servicio solo responde por `http://`, decidir `MINCOMERCIO_PERMITIR_HTTP=true` y documentar la excepción al HTTPS.
+- [ ] Servicio de precios real: `MINCOMERCIO_API_URL=https://appweb.dane.gov.co/sipsaWS/SrvSipsaUpraBeanService`, `MINCOMERCIO_TIMEOUT_MS=60000` (el servicio tarda unos 17 s en responder) y `node scripts/probarSipsa.js` ejecutado con éxito contra él (ventana de datos, productos y precios). `MINCOMERCIO_PERMITIR_HTTP` debe quedar en `false`.
 - [ ] API real de redes sociales, con su credencial. **Confirmar que su formato de respuesta coincide con el que asume el adaptador** (descrito al inicio de `RedesSocialesAdapter.js`).
 - [ ] Sin las variables del simulador (`http://127.0.0.1:4010`); `scripts/mockServicios.js` no se usa en producción.
 

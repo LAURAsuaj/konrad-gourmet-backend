@@ -70,9 +70,39 @@ describe('Ministerio de Comercio · servicio SOAP con el contrato de SIPSA (DANE
   const sobre = (cuerpo) => `<?xml version='1.0' encoding='UTF-8'?><S:Envelope xmlns:S="http://www.w3.org/2003/05/soap-envelope"><S:Body>${cuerpo}</S:Body></S:Envelope>`;
   const respuesta = (filas) => sobre(`<ns2:promediosSipsaCiudadResponse xmlns:ns2="http://servicios.sipsa.co.gov.dane/">${filas.join('')}</ns2:promediosSipsaCiudadResponse>`);
 
+  const ABRE = `<?xml version='1.0' encoding='UTF-8'?><S:Envelope xmlns:S="http://www.w3.org/2003/05/soap-envelope"><S:Body><ns2:promediosSipsaCiudadResponse xmlns:ns2="http://servicios.sipsa.co.gov.dane/">`;
+  const CIERRA = '</ns2:promediosSipsaCiudadResponse></S:Body></S:Envelope>';
+  const diaAtras = (dias) => new Date(Date.UTC(2026, 10, 6) - dias * 86_400_000).toISOString().slice(0, 10);
+
   let servidor;
   let url;
-  const estado = { peticiones: [], modo: 'ok', filas: [] };
+  const estado = { peticiones: [], modo: 'ok', filas: [], opciones: {}, escritos: 0 };
+
+  /** Imita al servicio real: historial del día más reciente al más antiguo, respetando el control de flujo. */
+  async function transmitirHistorial(res, { dias, porDia, mismaFecha = false }) {
+    res.writeHead(200, { 'Content-Type': 'application/soap+xml' });
+    res.write(ABRE);
+    for (let d = 0; d < dias; d += 1) {
+      for (let k = 0; k < porDia; k += 1) {
+        const registro = k < 4 ? fila('Arroz', `CIUDAD ${k}`, 4500 - d, diaAtras(mismaFecha ? 0 : d)) : fila(`Relleno ${k}`, 'CIUDAD 0', 1000, diaAtras(mismaFecha ? 0 : d));
+        estado.escritos += 1;
+        if (!res.write(registro)) await new Promise((r) => { res.once('drain', r); res.once('close', r); });
+        if (res.destroyed) return;
+      }
+    }
+    res.end(CIERRA);
+  }
+
+  /** Entrega la respuesta en trozos de un byte: parte etiquetas y caracteres con tilde por la mitad. */
+  async function transmitirEnTrozos(res, texto) {
+    res.writeHead(200, { 'Content-Type': 'application/soap+xml' });
+    const bytes = Buffer.from(texto, 'utf8');
+    for (let i = 0; i < bytes.length; i += 1) {
+      res.write(bytes.subarray(i, i + 1));
+      if (i % 50 === 0) await new Promise((r) => setImmediate(r));
+    }
+    res.end();
+  }
 
   before(async () => {
     servidor = http.createServer((req, res) => {
@@ -90,6 +120,9 @@ describe('Ministerio de Comercio · servicio SOAP con el contrato de SIPSA (DANE
           case 'xmlroto': return enviar(200, '<<<esto no es xml');
           case 'sinsobre': return enviar(200, '<html><body>hola</body></html>');
           case 'otraoperacion': return enviar(200, sobre('<ns2:otraCosa xmlns:ns2="x">1</ns2:otraCosa>'));
+          case 'historial': transmitirHistorial(res, estado.opciones); return undefined;
+          case 'trozos': transmitirEnTrozos(res, respuesta(estado.filas)); return undefined;
+          case 'fault200': return enviar(200, sobre('<S:Fault><S:Code><S:Value>S:Receiver</S:Value></S:Code><S:Reason><S:Text xml:lang="es">Falla dentro de un 200</S:Text></S:Reason></S:Fault>'));
           case 'lento': return undefined; // no responde nunca
           default: return enviar(404, '');
         }
@@ -100,9 +133,9 @@ describe('Ministerio de Comercio · servicio SOAP con el contrato de SIPSA (DANE
   });
   after(() => servidor.close());
 
-  const preparar = (modo, filas = []) => { estado.modo = modo; estado.filas = filas; estado.peticiones = []; };
+  const preparar = (modo, filas = [], opciones = {}) => { estado.modo = modo; estado.filas = filas; estado.peticiones = []; estado.opciones = opciones; estado.escritos = 0; };
   const adaptador = (config = {}, extra = {}) =>
-    new MinisterioComercioAdapter({ config: { baseUrl: url, timeoutMs: 600, ciudad: '', permitirHttp: false, cacheMinutos: 60, ...config }, ...extra });
+    new MinisterioComercioAdapter({ config: { baseUrl: url, timeoutMs: 600, ventanaDias: 14, ciudad: '', permitirHttp: false, cacheMinutos: 60, ...config }, ...extra });
   const precios = async (a, ...nombres) => (await a.consultarPrecios(nombres.map((n, i) => (typeof n === 'string' ? { id: String(i), nombre: n } : { id: String(i), ...n })))).map((r) => r.precioSugerido);
 
   it('envía un sobre SOAP 1.2 por POST, sin parámetros, con el espacio de nombres del servicio', async () => {
@@ -228,10 +261,63 @@ describe('Ministerio de Comercio · servicio SOAP con el contrato de SIPSA (DANE
     assert.deepEqual(await adaptador().consultarPrecios([]), []);
   });
 
+  it('lee la respuesta EN FLUJO y corta la conexión al salir de la ventana de días (no descarga todo el historial)', async () => {
+    preparar('historial', [], { dias: 400, porDia: 200 }); // 80.000 registros (~25 MB) si se leyeran enteros
+    const a = adaptador({ timeoutMs: 5000 });
+    assert.deepEqual(await precios(a, 'Arroz'), [4500], 'usa el dato del día más reciente (4.500), no los de días anteriores');
+    const resumen = await a.resumenDeTabla();
+    assert.equal(resumen.detenidaPorVentana, true);
+    assert.equal(resumen.truncada, false);
+    assert.equal(resumen.registros, 15 * 200, 'guarda los 15 días de la ventana (día 0 al día 14) y nada más antiguo');
+    assert.ok(resumen.fechaMasAntigua.startsWith(diaAtras(14)) && resumen.fechaMasReciente.startsWith(diaAtras(0)));
+    await new Promise((r) => setTimeout(r, 100));
+    assert.ok(estado.escritos < 40_000, `el servidor solo debió alcanzar a enviar una parte (envió ${estado.escritos} de 80000)`);
+  });
+
+  it('una ventana más corta lee menos, y un producto que solo aparece fuera de ella queda sin precio', async () => {
+    preparar('ok', [fila('Reciente', 'X', 100, '2026-11-06'), ...Array.from({ length: 60 }, (_, i) => fila(`Otro ${i}`, 'X', 1, '2026-11-06')),
+      ...Array.from({ length: 60 }, (_, i) => fila(`Viejo ${i}`, 'X', 7, '2026-10-01'))]);
+    const a = adaptador({ ventanaDias: 3 });
+    const r = await a.consultarPrecios([{ id: '1', nombre: 'Reciente' }, { id: '2', nombre: 'Viejo 3' }]);
+    assert.deepEqual(r.map((x) => [x.precioSugerido, x.motivo]), [[100, null], [null, 'SIN_PRECIO']]);
+    assert.equal((await a.resumenDeTabla()).detenidaPorVentana, true);
+  });
+
+  it('tolera una respuesta partida en trozos de un byte (etiquetas y letras con tilde cortadas por la mitad)', async () => {
+    preparar('trozos', [fila('Chócolo mazorca', 'SAN JOSÉ DE CÚCUTA', 1840), fila('Pimentón', 'BUCARAMANGA', 6250)]);
+    const a = adaptador({ ciudad: 'cucuta', timeoutMs: 3000 });
+    const r = await a.consultarPrecios([{ id: '1', nombre: 'Chócolo' }, { id: '2', nombre: 'Pimentón' }]);
+    assert.deepEqual(r.map((x) => [x.precioSugerido, x.motivo]), [[1840, null], [null, 'SIN_PRECIO']], 'Pimentón es de otra ciudad');
+    assert.deepEqual((await a.resumenDeTabla()).ciudades, ['BUCARAMANGA', 'SAN JOSÉ DE CÚCUTA']);
+  });
+
+  it('un registro viejo suelto entre registros recientes no corta la lectura', async () => {
+    preparar('ok', [fila('A', 'X', 100), fila('Viejo', 'X', 5, '2026-01-01'), fila('C', 'X', 300)]);
+    const r = await adaptador().consultarPrecios([{ id: '1', nombre: 'A' }, { id: '2', nombre: 'Viejo' }, { id: '3', nombre: 'C' }]);
+    assert.deepEqual(r.map((x) => x.precioSugerido), [100, null, 300]);
+  });
+
+  it('si nunca llega una fecha fuera de la ventana, lee hasta el tope de tamaño y usa lo leído', async () => {
+    preparar('historial', [], { dias: 1, porDia: 100_000, mismaFecha: true });
+    const a = adaptador({ maxBytes: 60_000, timeoutMs: 5000 });
+    assert.deepEqual(await precios(a, 'Arroz'), [4500]);
+    const resumen = await a.resumenDeTabla();
+    assert.equal(resumen.truncada, true);
+    assert.equal(resumen.detenidaPorVentana, false);
+    assert.ok(resumen.registros > 0 && resumen.registros < 5000);
+  });
+
+  it('un SOAP Fault dentro de una respuesta 200 también es un error', async () => {
+    preparar('fault200');
+    await assert.rejects(adaptador().consultarPrecios([{ id: '1', nombre: 'A' }]), (e) => e.message.includes('SOAP Fault') && e.message.includes('Falla dentro de un 200'));
+  });
+
   it('resumenDeTabla informa registros, productos, ciudades y la fecha más reciente (para npm run sipsa:probar)', async () => {
     preparar('ok', [fila('Arroz', 'BOGOTÁ', 4500, '2026-11-05'), fila('Arroz', 'CALI', 4300, '2026-11-06'), fila('Papa', 'CALI', 3000, '2026-11-06')]);
     const resumen = await adaptador().resumenDeTabla({ forzar: true });
     assert.deepEqual([resumen.registros, resumen.productos, resumen.ciudades], [3, 2, ['BOGOTÁ', 'CALI']]);
+    assert.deepEqual(resumen.nombresDeProductos, ['Arroz', 'Papa']);
+    assert.equal(resumen.ventanaDias, 14);
     assert.ok(resumen.fechaMasReciente.startsWith('2026-11-06'));
     assert.equal(resumen.muestra.length, 3);
   });
@@ -407,7 +493,7 @@ describe('Simulador scripts/mockServicios.js frente a los adaptadores reales', (
   const urlSoap = () => `${url}/sipsaWS/SrvSipsaUpraBeanService`;
 
   it('responde el servicio SOAP de precios con el contrato de SIPSA: promedios redondos y "sin precio"', async () => {
-    const min = new MinisterioComercioAdapter({ config: { baseUrl: urlSoap(), timeoutMs: 3000, ciudad: '', permitirHttp: false, cacheMinutos: 60 } });
+    const min = new MinisterioComercioAdapter({ config: { baseUrl: urlSoap(), timeoutMs: 3000, ventanaDias: 14, ciudad: '', permitirHttp: false, cacheMinutos: 60 } });
     const r = await min.consultarPrecios([
       { id: '1', nombre: 'Arroz' }, { id: '2', nombre: 'Pollo' }, { id: '3', nombre: 'Papa' }, { id: '4', nombre: 'Carne' },
       { id: '5', nombre: 'Chocolate' }, { id: '6', nombre: 'Producto sinprecio' }, { id: '7', nombre: 'Árroz ' }, { id: '8', nombre: 'Arroz', unidad: 'lb' },
@@ -417,7 +503,8 @@ describe('Simulador scripts/mockServicios.js frente a los adaptadores reales', (
     assert.equal(r[6].precioSugerido, 4500);
     assert.equal(r[7].precioSugerido, 2041.17);
     const resumen = await min.resumenDeTabla();
-    assert.deepEqual([resumen.registros, resumen.productos, resumen.ciudades.length], [176, 22, 4]);
+    // el simulador entrega 20 días; la ventana de 14 días guarda 15 (día 0 al 14) × 23 productos × 4 ciudades y corta la lectura
+    assert.deepEqual([resumen.registros, resumen.productos, resumen.ciudades.length, resumen.detenidaPorVentana], [1380, 23, 4, true]);
   });
 
   it('publica su WSDL y responde un SOAP Fault a las operaciones del servicio real que no simula', async () => {
@@ -429,9 +516,63 @@ describe('Simulador scripts/mockServicios.js frente a los adaptadores reales', (
     );
   });
 
-  it('entrega tendencias con "Arroz con coco" primero', async () => {
-    const t = await new RedesSocialesAdapter({ config: { baseUrl: url, token: 'token-de-prueba', timeoutMs: 3000 } }).obtenerTendencias({ limite: 10 });
-    assert.equal(t[0].termino, 'Arroz con coco');
+  const redes = (extra = {}) => new RedesSocialesAdapter({ config: { baseUrl: url, token: 'token-de-prueba', timeoutMs: 3000, ...extra } });
+  const crudas = async (consulta = '') => (await (await fetch(`${url}/tendencias?categoria=gastronomia&pais=CO${consulta}`, { headers: { Authorization: 'Bearer x' } })).json());
+
+  it('entrega tendencias de varias fuentes, ordenadas, y el adaptador deja un solo registro por término (el de mayor puntaje)', async () => {
+    const t = await redes().obtenerTendencias({ limite: 100 });
+    const sinProcesar = (await crudas('&limite=100')).tendencias;
+    assert.equal(sinProcesar.length, 28);
+    assert.equal(t.length, 27, '"Arroz con coco" llega de dos fuentes y se cuenta una vez');
+    assert.deepEqual(t.map((x) => x.puntaje), [...t.map((x) => x.puntaje)].sort((a, b) => b - a));
+    assert.deepEqual([...new Set(t.map((x) => x.fuente))].sort(), ['instagram', 'tiktok', 'x', 'youtube']);
+    const arroz = sinProcesar.filter((x) => x.termino === 'Arroz con coco');
+    assert.equal(arroz.length, 2);
+    assert.equal(t.find((x) => x.termino === 'Arroz con coco').puntaje, Math.max(...arroz.map((x) => x.puntaje)));
+    assert.equal((await redes().obtenerTendencias({ limite: 5 })).length, 5);
+  });
+
+  it('los puntajes cambian de un día a otro pero son repetibles durante el día, con variación y menciones', async () => {
+    const [a, b] = await Promise.all([crudas('&limite=100'), crudas('&limite=100')]);
+    assert.deepEqual(a.tendencias, b.tendencias);
+    for (const t of a.tendencias) {
+      assert.ok(Number.isInteger(t.puntaje) && t.puntaje >= 5 && t.puntaje <= 100, t.termino);
+      assert.ok(Number.isInteger(t.variacion) && Number.isInteger(t.menciones) && t.menciones > 0, t.termino);
+    }
+    assert.ok(new Set(a.tendencias.map((t) => t.variacion)).size > 5, 'la variación frente al día anterior no es constante');
+  });
+
+  it('filtra por fuente, país y categoría; solo conoce gastronomía en Colombia', async () => {
+    const soloX = (await crudas('&fuente=x&limite=100')).tendencias;
+    assert.ok(soloX.length > 0 && soloX.every((t) => t.fuente === 'x'));
+    const mexico = await (await fetch(`${url}/tendencias?categoria=gastronomia&pais=MX`, { headers: { Authorization: 'Bearer x' } })).json();
+    const otra = await (await fetch(`${url}/tendencias?categoria=moda&pais=CO`, { headers: { Authorization: 'Bearer x' } })).json();
+    assert.deepEqual([mexico.tendencias, otra.tendencias], [[], []]);
+  });
+
+  it('incluye términos con productos del menú (para promociones combinadas) y otros sin ellos (solo tendencia)', async () => {
+    const terminos = (await crudas('&limite=100')).tendencias.map((t) => t.termino.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase());
+    for (const producto of ['arroz', 'pollo', 'papa', 'aguacate', 'yuca', 'frijol', 'lenteja', 'repollo', 'zanahoria', 'platano']) {
+      assert.ok(terminos.some((t) => t.includes(producto)), `ningún término contiene ${producto}`);
+    }
+    assert.ok(terminos.some((t) => t.includes('brownie')), 'hay términos que no corresponden a ningún producto');
+  });
+
+  it('con --redes-caidas las tendencias responden 503 (error reintentable) y el servicio de precios sigue funcionando', async () => {
+    const puerto = await puertoLibre();
+    let salida = '';
+    const caido = spawn(process.execPath, ['scripts/mockServicios.js', `--puerto=${puerto}`, '--redes-caidas'], { cwd: raiz });
+    caido.stdout.on('data', (d) => { salida += d; });
+    try {
+      assert.ok(await esperar(() => salida.includes('escuchando'), 10000));
+      await assert.rejects(
+        new RedesSocialesAdapter({ config: { baseUrl: `http://127.0.0.1:${puerto}`, token: 't', timeoutMs: 3000 } }).obtenerTendencias({ limite: 5 }),
+        (e) => e instanceof ServicioExternoError && e.estado === 503 && e.reintentable === true
+      );
+      assert.equal((await fetch(`http://127.0.0.1:${puerto}/sipsaWS/SrvSipsaUpraBeanService?WSDL`)).status, 200);
+    } finally {
+      caido.kill();
+    }
   });
 
   it('las tendencias exigen la cabecera Authorization (el servicio de precios es público, como el de SIPSA)', async () => {

@@ -142,7 +142,8 @@ export const env = congelar({
 
   ministerio: {
     baseUrl: texto('MINCOMERCIO_API_URL'),
-    timeoutMs: entero('MINCOMERCIO_TIMEOUT_MS', 20000, 500),
+    timeoutMs: entero('MINCOMERCIO_TIMEOUT_MS', 60000, 500),
+    ventanaDias: entero('MINCOMERCIO_VENTANA_DIAS', 14, 1),
     ciudad: texto('MINCOMERCIO_CIUDAD'),
     permitirHttp: booleano('MINCOMERCIO_PERMITIR_HTTP', false),
     cacheMinutos: entero('MINCOMERCIO_CACHE_MINUTOS', 360, 1),

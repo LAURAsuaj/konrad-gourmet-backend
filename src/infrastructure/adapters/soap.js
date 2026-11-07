@@ -8,7 +8,7 @@
  * ServicioExternoError, el mismo error que usan los demás adaptadores.
  */
 import { XMLParser } from 'fast-xml-parser';
-import { solicitarTexto } from './httpSeguro.js';
+import { solicitarTexto, solicitarEnFlujo } from './httpSeguro.js';
 import {
   ServicioExternoError,
   CODIGOS_ERROR_SERVICIO as CODIGOS,
@@ -103,4 +103,103 @@ export async function solicitarSoap({ servicio, url, namespace, operacion, cuerp
     );
   }
   return respuesta === '' || respuesta === null ? {} : respuesta;
+}
+
+const ETIQUETA_ABRE = '<return>';
+const ETIQUETA_CIERRA = '</return>';
+const LIMITE_SIN_REGISTROS = 2_000_000; // texto acumulado sin ver ningún registro completo
+
+/**
+ * Invoca una operación cuya respuesta es una lista enorme de <return> y la entrega por LOTES de
+ * registros ya interpretados, a medida que llegan, sin acumular la respuesta. `alRegistros(lote,
+ * {bytes})` devuelve `false` para cortar la conexión (por ejemplo, al llegar a datos demasiado
+ * antiguos). Un SOAP Fault, un error HTTP o una respuesta sin el elemento de la operación se
+ * traducen igual que en solicitarSoap.
+ *
+ * @param {{servicio: string, url: string|URL, namespace: string, operacion: string, cuerpoXml?: string,
+ *          timeoutMs: number, plazoTotalMs?: number, permitirHttp?: boolean,
+ *          alRegistros: (registros: object[], info: {bytes: number}) => boolean|void}} opciones
+ * @returns {Promise<{completa: boolean, bytes: number, registros: number}>}
+ * @throws {ServicioExternoError}
+ */
+export async function solicitarSoapEnFlujo({
+  servicio,
+  url,
+  namespace,
+  operacion,
+  cuerpoXml = '',
+  timeoutMs,
+  plazoTotalMs,
+  permitirHttp = false,
+  alRegistros,
+}) {
+  let pendiente = ''; // texto recibido y aún no interpretado
+  let registros = 0;
+
+  const resultado = await solicitarEnFlujo({
+    servicio,
+    url,
+    metodo: 'POST',
+    cabeceras: {
+      'Content-Type': 'application/soap+xml; charset=utf-8; action=""',
+      Accept: 'application/soap+xml, text/xml',
+    },
+    cuerpo: construirSobre({ namespace, operacion, cuerpoXml }),
+    timeoutMs,
+    plazoTotalMs,
+    permitirHttp,
+    alRecibir: (texto, bytes) => {
+      pendiente += texto;
+      const crudos = [];
+      for (;;) {
+        const inicio = pendiente.indexOf(ETIQUETA_ABRE);
+        if (inicio === -1) break;
+        const fin = pendiente.indexOf(ETIQUETA_CIERRA, inicio);
+        if (fin === -1) break;
+        crudos.push(pendiente.slice(inicio, fin + ETIQUETA_CIERRA.length));
+        pendiente = pendiente.slice(fin + ETIQUETA_CIERRA.length);
+      }
+      if (crudos.length === 0) {
+        if (pendiente.length > LIMITE_SIN_REGISTROS) {
+          throw new ServicioExternoError(servicio, CODIGOS.RESPUESTA_INVALIDA, 'La respuesta no contiene registros reconocibles');
+        }
+        return true;
+      }
+      let lote;
+      try {
+        lote = analizador.parse(`<lote>${crudos.join('')}</lote>`)?.lote?.return ?? [];
+      } catch {
+        throw new ServicioExternoError(servicio, CODIGOS.RESPUESTA_INVALIDA, 'La respuesta contiene registros que no son XML válido');
+      }
+      registros += lote.length;
+      return alRegistros(lote, { bytes });
+    },
+  });
+
+  if (resultado.estado < 200 || resultado.estado >= 300) {
+    let cuerpo = null;
+    try {
+      cuerpo = cuerpoDelSobre(servicio, resultado.texto);
+    } catch {
+      // un error HTTP puede traer HTML u otro texto: se informa el código
+    }
+    if (cuerpo?.Fault) {
+      throw new ServicioExternoError(servicio, CODIGOS.HTTP, `El servicio devolvió un SOAP Fault: ${textoDeFalla(cuerpo.Fault)}`, {
+        estado: resultado.estado,
+      });
+    }
+    throw new ServicioExternoError(servicio, CODIGOS.HTTP, `El servicio respondió HTTP ${resultado.estado}`, { estado: resultado.estado });
+  }
+
+  if (registros === 0 && resultado.completa) {
+    // respuesta sin registros: debe ser un sobre válido (posiblemente con un Fault o con la respuesta vacía)
+    const cuerpo = cuerpoDelSobre(servicio, pendiente);
+    if (cuerpo?.Fault) {
+      throw new ServicioExternoError(servicio, CODIGOS.HTTP, `El servicio devolvió un SOAP Fault: ${textoDeFalla(cuerpo.Fault)}`, { estado: 500 });
+    }
+    if (cuerpo[`${operacion}Response`] === undefined) {
+      throw new ServicioExternoError(servicio, CODIGOS.RESPUESTA_INVALIDA, `La respuesta SOAP no contiene el elemento ${operacion}Response`);
+    }
+  }
+  return { completa: resultado.completa, bytes: resultado.bytes, registros };
 }

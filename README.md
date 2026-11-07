@@ -47,7 +47,7 @@ Compruebe `http://localhost:3000/salud`. La guía completa, con los errores más
 | `npm run start:cron` | Inicia el contenedor de procesos automáticos (descuento diario, tendencias, reintento de precios) |
 | `npm run admin:crear` | Crea el primer Administrador (solo funciona si aún no existe uno) |
 | `npm run db:schema` | Aplica el esquema con `psql` (alternativa al SQL Editor de Supabase) |
-| `npm run sipsa:probar` | Inspecciona el servicio SOAP de precios configurado e informa qué devuelve (real o simulador); con opciones, ver [Instalación](docs/INSTALACION.md) |
+| `npm run sipsa:probar` | Consulta el servicio SOAP de precios configurado e informa qué devuelve y qué productos ofrece (real o simulador); con opciones, se ejecuta con `node scripts/probarSipsa.js` (ver [Instalación](docs/INSTALACION.md)) |
 | `npm test` | Ejecuta las pruebas automáticas |
 
 ## Pruebas
