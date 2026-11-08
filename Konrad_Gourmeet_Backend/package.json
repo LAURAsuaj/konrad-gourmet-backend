@@ -12,6 +12,7 @@
     "dev": "node --watch src/app.js",
     "start:cron": "node cron/worker.js",
     "admin:crear": "node scripts/crearAdministrador.js",
+    "demo:sembrar": "node scripts/sembrarDemo.js",
     "db:schema": "psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f src/infrastructure/database/schema.sql",
     "test": "node tests/ejecutar.js",
     "sipsa:probar": "node scripts/probarSipsa.js"
