@@ -1,2 +1,0 @@
-# Fin de línea LF en todo el proyecto: evita que Windows (CRLF) dañe los Dockerfile y los scripts
-* text=auto eol=lf
