@@ -1,7 +1,5 @@
 # Konrad Gourmet — Backend
 
-![CI](https://github.com/LAURAsuaj/konrad-gourmet-backend/actions/workflows/ci.yml/badge.svg)
-
 Backend del sistema **Konrad Gourmet**: gestión de cocina, inventario y compras de restaurantes. Expone una API REST (Node.js + PostgreSQL en Supabase) con una arquitectura basada en eventos, y un contenedor independiente de procesos automáticos.
 
 ## Qué hace
