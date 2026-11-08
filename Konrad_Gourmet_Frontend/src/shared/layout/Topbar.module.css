@@ -1,0 +1,69 @@
+.barra {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--kg-esp-3);
+  height: var(--kg-alto-barra);
+  padding: 0 var(--kg-esp-5);
+  background: color-mix(in srgb, var(--kg-fondo) 92%, transparent);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--kg-borde);
+}
+
+.abrir {
+  display: none;
+}
+
+.marcaMovil {
+  display: none;
+}
+
+.espacio {
+  flex: 1;
+}
+
+.campana {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--kg-radio);
+  color: var(--kg-texto);
+}
+
+.campana:hover {
+  background: var(--kg-neutro-suave);
+}
+
+.contador {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--kg-primario);
+  color: var(--kg-sobre-primario);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+@media (max-width: 1024px) {
+  .barra {
+    padding: 0 var(--kg-esp-3);
+  }
+
+  .abrir {
+    display: inline-flex;
+  }
+
+  .marcaMovil {
+    display: flex;
+  }
+}

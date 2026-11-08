@@ -1,0 +1,116 @@
+/* Maqueta en miniatura que se pinta con las variables del tema que se está editando */
+.marco {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  min-height: 300px;
+  border: 1px solid var(--kg-borde);
+  border-radius: var(--kg-radio-lg);
+  overflow: hidden;
+  background: var(--kg-fondo);
+  color: var(--kg-texto);
+  font-family: var(--kg-fuente);
+}
+
+.lateral {
+  display: grid;
+  align-content: start;
+  gap: var(--kg-esp-2);
+  padding: var(--kg-esp-3) var(--kg-esp-2);
+  background: var(--kg-superficie);
+  border-right: 1px solid var(--kg-borde);
+  font-size: 11px;
+}
+
+.marca {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  margin-bottom: var(--kg-esp-2);
+}
+
+.monograma {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--kg-primario);
+  color: var(--kg-sobre-primario);
+  font-weight: 800;
+}
+
+.logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.item {
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.activo {
+  background: var(--kg-primario);
+  color: var(--kg-sobre-primario);
+  font-weight: 700;
+}
+
+.contenido {
+  display: grid;
+  align-content: start;
+  gap: var(--kg-esp-3);
+  padding: var(--kg-esp-4);
+}
+
+.titulo {
+  font-size: var(--kg-texto-lg);
+  font-weight: 800;
+}
+
+.suave {
+  font-size: var(--kg-texto-xs);
+  color: var(--kg-texto-suave);
+}
+
+.tarjeta {
+  position: relative;
+  padding: var(--kg-esp-3) var(--kg-esp-3) var(--kg-esp-3) calc(var(--kg-esp-3) + 4px);
+  background: var(--kg-superficie);
+  border: 1px solid var(--kg-borde);
+  border-radius: var(--kg-radio);
+  font-size: var(--kg-texto-sm);
+}
+
+.tarjeta::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--kg-primario);
+}
+
+.enlace {
+  color: var(--kg-primario-fuerte);
+  font-weight: 600;
+}
+
+.boton {
+  justify-self: start;
+  padding: 8px 14px;
+  border-radius: var(--kg-radio);
+  background: var(--kg-primario);
+  color: var(--kg-sobre-primario);
+  font-weight: 600;
+  font-size: var(--kg-texto-sm);
+}
+
+.panel {
+  padding: var(--kg-esp-3);
+  border-radius: var(--kg-radio);
+  background: var(--kg-secundario);
+  color: var(--kg-sobre-secundario);
+  font-size: var(--kg-texto-sm);
+  font-weight: 700;
+}

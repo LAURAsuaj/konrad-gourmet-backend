@@ -1,0 +1,70 @@
+/* Tarjeta flotante de alerta: indicador lateral de 4 px en el color de marca. */
+.alerta {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--kg-esp-3);
+  align-items: start;
+  width: 100%;
+  padding: var(--kg-esp-3) var(--kg-esp-3) var(--kg-esp-3) calc(var(--kg-esp-4) + 4px);
+  background: var(--kg-superficie);
+  border: 1px solid var(--kg-borde);
+  border-radius: var(--kg-radio);
+  overflow: hidden;
+}
+
+.flotante {
+  box-shadow: var(--kg-sombra-flotante);
+  animation: entrar var(--kg-duracion) ease-out;
+}
+
+.alerta::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--kg-primario);
+}
+
+.icono {
+  color: var(--kg-primario-fuerte);
+  margin-top: 2px;
+}
+
+.categoria {
+  font-size: var(--kg-texto-xs);
+  font-weight: 600;
+  color: var(--kg-primario-fuerte);
+}
+
+.titulo {
+  font-size: var(--kg-texto-sm);
+  font-weight: 700;
+}
+
+.detalle {
+  margin-top: 2px;
+  font-size: var(--kg-texto-sm);
+  color: var(--kg-texto-suave);
+}
+
+.pie {
+  display: flex;
+  align-items: center;
+  gap: var(--kg-esp-3);
+  margin-top: var(--kg-esp-2);
+  font-size: var(--kg-texto-xs);
+  color: var(--kg-texto-suave);
+}
+
+.enlace {
+  font-weight: 600;
+  font-size: var(--kg-texto-sm);
+}
+
+@keyframes entrar {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}

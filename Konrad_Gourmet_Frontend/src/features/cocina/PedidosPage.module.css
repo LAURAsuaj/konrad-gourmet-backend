@@ -1,0 +1,26 @@
+.filtros {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--kg-esp-3);
+  flex-wrap: wrap;
+  padding: var(--kg-esp-4);
+  border-bottom: 1px solid var(--kg-borde);
+}
+
+.campoDia {
+  width: 190px;
+}
+
+.campoMesa {
+  width: 150px;
+}
+
+.platos {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.aviso {
+  padding: var(--kg-esp-4);
+}

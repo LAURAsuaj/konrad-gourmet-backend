@@ -1,0 +1,31 @@
+.marca {
+  display: flex;
+  align-items: center;
+  gap: var(--kg-esp-3);
+  min-width: 0;
+}
+
+.logo {
+  display: block;
+  object-fit: contain;
+  border-radius: var(--kg-radio-sm);
+}
+
+.monograma {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: var(--kg-radio);
+  background: var(--kg-primario);
+  color: var(--kg-sobre-primario);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.nombre {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

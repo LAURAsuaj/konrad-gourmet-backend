@@ -1,0 +1,58 @@
+.control {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--kg-borde-fuerte);
+  border-radius: var(--kg-radio);
+  background: var(--kg-superficie);
+  overflow: hidden;
+}
+
+.boton {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  background: transparent;
+  color: var(--kg-texto);
+  font-size: 1.25rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.boton:hover:not(:disabled) {
+  background: var(--kg-primario-suave);
+  color: var(--kg-primario-fuerte);
+}
+
+.boton:disabled {
+  color: var(--kg-borde-fuerte);
+  cursor: not-allowed;
+}
+
+.valor {
+  width: 44px;
+  height: 40px;
+  border: 0;
+  border-inline: 1px solid var(--kg-borde);
+  text-align: center;
+  font-weight: 700;
+  background: transparent;
+  -moz-appearance: textfield;
+}
+
+.valor::-webkit-outer-spin-button,
+.valor::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.compacto .boton {
+  width: 34px;
+  height: 34px;
+}
+
+.compacto .valor {
+  width: 38px;
+  height: 34px;
+}

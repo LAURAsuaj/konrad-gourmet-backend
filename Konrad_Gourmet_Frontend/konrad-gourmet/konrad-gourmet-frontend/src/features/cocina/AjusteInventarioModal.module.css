@@ -1,0 +1,26 @@
+.formulario {
+  display: grid;
+  gap: var(--kg-esp-4);
+}
+
+.dosColumnas {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--kg-esp-3);
+}
+
+.acciones {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--kg-esp-2);
+}
+
+.producto {
+  font-weight: 700;
+}
+
+@media (max-width: 480px) {
+  .dosColumnas {
+    grid-template-columns: 1fr;
+  }
+}

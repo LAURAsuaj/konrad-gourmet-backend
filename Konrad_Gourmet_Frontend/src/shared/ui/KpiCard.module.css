@@ -1,0 +1,39 @@
+.kpi {
+  display: grid;
+  gap: var(--kg-esp-2);
+  align-content: start;
+  padding: var(--kg-esp-4) var(--kg-esp-5);
+  background: var(--kg-superficie);
+  border: 1px solid var(--kg-borde);
+  border-radius: var(--kg-radio-lg);
+}
+
+.etiqueta {
+  font-size: var(--kg-texto-sm);
+  font-weight: 600;
+  color: var(--kg-texto-suave);
+}
+
+.valor {
+  font-size: var(--kg-texto-2xl);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.detalle {
+  font-size: var(--kg-texto-xs);
+  color: var(--kg-texto-suave);
+}
+
+.destacado {
+  border-color: color-mix(in srgb, var(--kg-primario) 45%, var(--kg-borde));
+  box-shadow: inset 4px 0 0 var(--kg-primario);
+}
+
+.grilla {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--kg-esp-3);
+  margin-bottom: var(--kg-esp-5);
+}
