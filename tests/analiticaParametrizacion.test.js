@@ -113,12 +113,12 @@ describe('Parametrización, analítica y auditoría', () => {
 
     it('sin configurar entrega la apariencia por defecto, sin necesidad de sesión', async () => {
       const a = await app.facade.consultarApariencia();
-      assert.deepEqual([a.nombreComercial, a.colorPrimario, a.tipografia, a.logo], ['Konrad Gourmet', '#8B1E3F', 'sistema', null]);
+      assert.deepEqual([a.nombreComercial, a.colorPrimario, a.tipografia, a.logo], ['Konrad Gourmet', '#00A3B4', 'sistema', null]);
     });
 
     it('el Administrador cambia nombre, colores, tipografía y textos; lo no indicado conserva su valor y los colores se normalizan', async () => {
       const r = await definir({ nombreComercial: '  Konrad Lorenz Gourmet ', colorPrimario: '#1f6feb', tipografia: 'serif', textoBienvenida: 'Hola equipo' });
-      assert.deepEqual([r.valor.nombreComercial, r.valor.colorPrimario, r.valor.colorSecundario, r.valor.tipografia], ['Konrad Lorenz Gourmet', '#1F6FEB', '#C8A24A', 'serif']);
+      assert.deepEqual([r.valor.nombreComercial, r.valor.colorPrimario, r.valor.colorSecundario, r.valor.tipografia], ['Konrad Lorenz Gourmet', '#1F6FEB', '#1A202C', 'serif']);
       const a = await app.facade.consultarApariencia();
       assert.deepEqual([a.nombreComercial, a.colorPrimario, a.textoBienvenida], ['Konrad Lorenz Gourmet', '#1F6FEB', 'Hola equipo']);
       assert.ok(r.actualizadoEn);
@@ -150,7 +150,7 @@ describe('Parametrización, analítica y auditoría', () => {
 
     it('si lo guardado fuera inválido (edición directa de la base), se usa la apariencia por defecto', async () => {
       await app.q(`UPDATE parametro SET valor = '{"colorPrimario": "x"}'::jsonb WHERE clave = 'imagen_corporativa'`);
-      assert.equal((await app.facade.consultarApariencia()).colorPrimario, '#8B1E3F');
+      assert.equal((await app.facade.consultarApariencia()).colorPrimario, '#00A3B4');
       await definir({}); // deja la apariencia por defecto
     });
 

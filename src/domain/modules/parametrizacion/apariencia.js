@@ -23,10 +23,10 @@ const REGEX_PROHIBIDOS = /[<>\u0000-\u001f]/;
 export const APARIENCIA_POR_DEFECTO = Object.freeze({
   nombreComercial: 'Konrad Gourmet',
   eslogan: '',
-  colorPrimario: '#8B1E3F',
-  colorSecundario: '#C8A24A',
-  colorFondo: '#FFFFFF',
-  colorTexto: '#1F2933',
+  colorPrimario: 'hsl(186, 100%, 35%)',
+  colorSecundario: '#1A202C',
+  colorFondo: '#F8F9FA',
+  colorTexto: '#1A202C',
   tipografia: 'sistema',
   logo: null,
   textoBienvenida: 'Bienvenido al sistema de abastecimiento',
@@ -116,7 +116,7 @@ export function validarApariencia(valor) {
   for (const [campo, etiqueta] of Object.entries(CAMPOS_COLOR)) {
     if (!(campo in valor)) continue;
     if (typeof valor[campo] !== 'string' || !REGEX_COLOR.test(valor[campo].trim())) {
-      throw new ErrorValidacion(`${etiqueta} debe tener el formato #RRGGBB (por ejemplo #8B1E3F)`);
+      throw new ErrorValidacion(`${etiqueta} debe tener el formato #RRGGBB (por ejemplo #00A3B4)`);
     }
     resultado[campo] = valor[campo].trim().toUpperCase();
   }

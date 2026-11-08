@@ -245,10 +245,10 @@ Imagen corporativa vigente de la interfaz: nombre, colores, tipografía, logo y 
   "datos": {
     "nombreComercial": "Konrad Gourmet",
     "eslogan": "",
-    "colorPrimario": "#8B1E3F",
-    "colorSecundario": "#C8A24A",
-    "colorFondo": "#FFFFFF",
-    "colorTexto": "#1F2933",
+    "colorPrimario": "#00A3B4",
+    "colorSecundario": "#1A202C",
+    "colorFondo": "#F8F9FA",
+    "colorTexto": "#1A202C",
     "tipografia": "sistema",
     "logo": null,
     "textoBienvenida": "Bienvenido al sistema de abastecimiento",
@@ -665,7 +665,7 @@ Lista las reglas parametrizables del sistema con su valor actual.
       "clave": "imagen_corporativa",
       "valor": {
         "nombreComercial": "Konrad Gourmet",
-        "colorPrimario": "#8B1E3F",
+        "colorPrimario": "#00A3B4",
         "…": "los demás campos de la imagen corporativa"
       },
       "descripcion": "Imagen corporativa de la interfaz: nombre, colores, tipografía, logo y textos (requisito de interfaz gráfica)",

@@ -134,10 +134,10 @@ La interfaz puede cambiar su imagen sin tocar código ni contratar a un diseñad
 |---|---|---|
 | `nombreComercial` | `Konrad Gourmet` | Texto de 1 a 60 caracteres |
 | `eslogan` | vacío | Texto de hasta 120 caracteres |
-| `colorPrimario` | `#8B1E3F` | Color `#RRGGBB` |
-| `colorSecundario` | `#C8A24A` | Color `#RRGGBB` |
-| `colorFondo` | `#FFFFFF` | Color `#RRGGBB` |
-| `colorTexto` | `#1F2933` | Color `#RRGGBB`; con el color de fondo debe tener un contraste de al menos 4,5:1 (accesibilidad WCAG 2.1 AA) |
+| `colorPrimario` | `#00A3B4` (turquesa institucional Konrad Lorenz, provisional) | Color `#RRGGBB` |
+| `colorSecundario` | `#1A202C` | Color `#RRGGBB` |
+| `colorFondo` | `#F8F9FA` | Color `#RRGGBB` |
+| `colorTexto` | `#1A202C` | Color `#RRGGBB`; con el color de fondo debe tener un contraste de al menos 4,5:1 (accesibilidad WCAG 2.1 AA) |
 | `tipografia` | `sistema` | `sistema`, `serif`, `redondeada` o `monoespaciada` |
 | `logo` | ninguno (`null`) | URL `https` o imagen incrustada `data:image/png`, `jpeg`, `webp` o `gif` en base64 (máximo unos 60 KB; no se admite SVG por seguridad); `null` lo quita |
 | `textoBienvenida` | `Bienvenido al sistema de abastecimiento` | Texto de hasta 200 caracteres |
