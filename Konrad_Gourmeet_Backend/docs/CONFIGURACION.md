@@ -40,8 +40,9 @@ El sistema lee **41 variables**; solo 4 son obligatorias.
 | `JWT_EXPIRES_IN` | No | `30m` | Vida de cada token (`30m`, `1h`). Con la renovación, una sesión inactiva más de este tiempo expira. |
 | `JWT_ISSUER` | No | `konrad-gourmet` | Emisor que se escribe y valida en los tokens. |
 | `BCRYPT_ROUNDS` | No | `12` | Costo de bcrypt (10 a 15). Con 12, cada contraseña tarda unos 270 ms de un procesador. |
-| `LOGIN_RATE_LIMIT_MAX` | No | `10` | Intentos de inicio de sesión fallidos permitidos por IP dentro de la ventana; después responde 429. |
-| `LOGIN_RATE_LIMIT_WINDOW_MIN` | No | `15` | Ventana, en minutos, del límite anterior. |
+| `LOGIN_RATE_LIMIT_MAX` | No | `10` | Intentos de inicio de sesión fallidos permitidos **para una misma cuenta desde un mismo equipo** (IP + correo) dentro de la ventana; después responde 429 solo para esa cuenta. Los demás usuarios de la misma red no se afectan. |
+| `LOGIN_RATE_LIMIT_MAX_IP` | No | `100` | Intentos fallidos permitidos **en total desde un mismo equipo** (IP), sumando todas las cuentas; frena que se prueben muchas cuentas. Después responde 429 a cualquier cuenta desde ese equipo. |
+| `LOGIN_RATE_LIMIT_WINDOW_MIN` | No | `15` | Ventana, en minutos, de los dos límites anteriores. Los contadores viven en memoria: reiniciar la API los borra. |
 
 ### Eventos (Outbox)
 

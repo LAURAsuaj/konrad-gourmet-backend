@@ -122,6 +122,7 @@ export const env = congelar({
     tlsCertPath,
     tlsKeyPath,
     loginMaxFallos: entero('LOGIN_RATE_LIMIT_MAX', 10, 1),
+    loginMaxFallosIp: entero('LOGIN_RATE_LIMIT_MAX_IP', 100, 1),
     loginVentanaMinutos: entero('LOGIN_RATE_LIMIT_WINDOW_MIN', 15, 1),
   },
 

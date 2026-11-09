@@ -20,7 +20,11 @@ function mensajeDeLogin(error) {
       return 'Su cuenta está bloqueada por intentos fallidos. Pida al Administrador que la desbloquee.';
     case 'DEMASIADOS_INTENTOS': {
       const minutos = error.reintentarEnSegundos ? Math.ceil(error.reintentarEnSegundos / 60) : 15;
-      return `Hubo demasiados intentos desde este equipo. Intente de nuevo en ${minutos} ${minutos === 1 ? 'minuto' : 'minutos'}.`;
+      const espera = `${minutos} ${minutos === 1 ? 'minuto' : 'minutos'}`;
+      // La API distingue el límite de una cuenta del límite de todo el equipo
+      return /este equipo/i.test(error.message)
+        ? `Hubo demasiados intentos fallidos desde este equipo con distintas cuentas. Intente de nuevo en ${espera}.`
+        : `Hubo demasiados intentos fallidos con esta cuenta. Intente de nuevo en ${espera} o use otra cuenta.`;
     }
     default:
       return error.message;

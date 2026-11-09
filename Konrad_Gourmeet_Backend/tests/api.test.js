@@ -196,7 +196,7 @@ describe('API HTTP', () => {
       assert.equal((await app.http('GET', `/solicitudes/${sol.json.datos.id}`, { token: T.aux })).json.datos.valorTotalSugerido, 450_000);
       const listado = (await app.http('GET', '/solicitudes?estado=PENDIENTE', { token: T.aux })).json.datos;
       assert.equal(listado.total, 1);
-      assert.deepEqual(listado.solicitudes[0].alimentos, [{ producto: 'Arroz', marca: null, cantidad: 100, unidad: 'kg' }], 'el listado trae los alimentos de cada solicitud');
+      assert.deepEqual(listado.solicitudes[0].alimentos, [{ producto: 'Arroz', marca: null, cantidad: 100, unidad: 'kg', precioSugeridoUnitario: 4500 }], 'el listado trae los alimentos de cada solicitud con su precio sugerido');
 
       const cot = await post('cotizaciones', { solicitudId: sol.json.datos.id, proveedorId: ids.prov, plazoMaximo: fechaEnColombia(1) }, T.aux);
       assert.equal(cot.estado, 201);
@@ -318,14 +318,44 @@ describe('API HTTP', () => {
   });
 
   describe('Límite de intentos de inicio de sesión', () => {
-    it('tras 5 intentos fallidos desde la misma IP se bloquea, incluso con la contraseña correcta', async () => {
-      assert.equal((await app.http('POST', '/auth/login', { cuerpo: { correo: 'admin@kg.co', password: 'Admin12345' } })).estado, 200, 'un acceso correcto reinicia el conteo');
+    it('tras 5 intentos fallidos con una cuenta se bloquea esa cuenta en ese equipo, no las demás', async () => {
+      assert.equal((await app.http('POST', '/auth/login', { cuerpo: { correo: 'admin@kg.co', password: 'Admin12345' } })).estado, 200);
       const estados = [];
-      for (let i = 0; i < 6; i++) estados.push((await app.http('POST', '/auth/login', { cuerpo: { correo: `nadie${i}@kg.co`, password: 'Incorrecta1' } })).estado);
+      for (let i = 0; i < 6; i++) estados.push((await app.http('POST', '/auth/login', { cuerpo: { correo: 'Nadie@KG.co', password: 'Incorrecta1' } })).estado);
       assert.deepEqual(estados, [401, 401, 401, 401, 401, 429]);
-      const bloqueado = await app.http('POST', '/auth/login', { cuerpo: { correo: 'admin@kg.co', password: 'Admin12345' } });
-      assert.equal(bloqueado.estado, 429);
-      assert.ok(bloqueado.cabeceras.has('retry-after'));
+      const misma = await app.http('POST', '/auth/login', { cuerpo: { correo: ' nadie@kg.co ', password: 'Incorrecta1' } });
+      assert.equal(misma.estado, 429, 'el correo se compara sin mayúsculas ni espacios');
+      assert.ok(misma.cabeceras.has('retry-after'));
+      const otra = await app.http('POST', '/auth/login', { cuerpo: { correo: 'admin@kg.co', password: 'Admin12345' } });
+      assert.equal(otra.estado, 200, 'otro usuario del mismo equipo sigue pudiendo entrar');
+    });
+
+    it('con muchos fallos repartidos en varias cuentas se bloquea el equipo completo', async () => {
+      // Importación tardía: la configuración se lee una sola vez y la aplica iniciarAplicacion
+      const { limitarIntentosLogin } = await import('../src/presentation/middlewares/httpSecurity.js');
+      const limite = limitarIntentosLogin({ max: 5, maxPorIp: 3, ventanaMs: 60_000 });
+      const pedir = (correo, estadoFinal) =>
+        new Promise((resolver) => {
+          const oyentes = {};
+          const res = {
+            statusCode: estadoFinal,
+            cabeceras: {},
+            on: (evento, fn) => (oyentes[evento] = fn),
+            set(nombre, valor) { this.cabeceras[nombre] = valor; },
+            status(codigo) { this.statusCode = codigo; return this; },
+            json(cuerpo) { resolver({ estado: this.statusCode, cuerpo }); },
+          };
+          limite({ ip: '10.0.0.9', body: { correo } }, res, () => {
+            oyentes.finish();
+            resolver({ estado: estadoFinal });
+          });
+        });
+      const estados = [];
+      for (const correo of ['a@x.co', 'b@x.co', 'c@x.co', 'd@x.co']) estados.push((await pedir(correo, 401)).estado);
+      assert.deepEqual(estados, [401, 401, 401, 429]);
+      const bloqueo = await pedir('e@x.co', 200);
+      assert.equal(bloqueo.estado, 429);
+      assert.match(bloqueo.cuerpo.error.mensaje, /este equipo/);
     });
   });
 });

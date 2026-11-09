@@ -53,36 +53,64 @@ export function configurarSeguridadHttp(
 }
 
 /**
- * Limita los intentos de inicio de sesión fallidos por IP dentro de una ventana.
- * Un acceso correcto reinicia el conteo.
+ * Limita los intentos de inicio de sesión fallidos dentro de una ventana, con dos contadores:
+ *  - por cuenta desde un mismo equipo (IP + correo), `max`: frena que se adivine la
+ *    contraseña de una cuenta sin afectar a los demás usuarios que comparten la red
+ *    (en un restaurante todos los meseros salen por la misma IP);
+ *  - por IP, `maxPorIp`, mucho más alto: frena que se prueben muchas cuentas desde un equipo.
+ * Un acceso correcto reinicia el contador de esa cuenta. El bloqueo de la cuenta tras
+ * `max_intentos_login` fallos es aparte y lo hace AuthService en la base de datos.
  */
 export function limitarIntentosLogin({
   max = env.server.loginMaxFallos,
+  maxPorIp = env.server.loginMaxFallosIp,
   ventanaMs = env.server.loginVentanaMinutos * 60_000,
 } = {}) {
   const fallos = new Map();
+  const vigente = (clave, ahora) => {
+    const registro = fallos.get(clave);
+    if (registro && ahora - registro.inicio > ventanaMs) {
+      fallos.delete(clave);
+      return undefined;
+    }
+    return registro;
+  };
+  const responder429 = (res, registro, ahora, mensaje) => {
+    res.set('Retry-After', String(Math.ceil((registro.inicio + ventanaMs - ahora) / 1000)));
+    res.status(429).json({ error: { codigo: 'DEMASIADOS_INTENTOS', mensaje } });
+  };
+
   return (req, res, next) => {
     const ahora = Date.now();
     if (fallos.size > 10_000) {
-      for (const [ip, registro] of fallos) if (ahora - registro.inicio > ventanaMs) fallos.delete(ip);
+      for (const [clave, registro] of fallos) if (ahora - registro.inicio > ventanaMs) fallos.delete(clave);
     }
-    let registro = fallos.get(req.ip);
-    if (registro && ahora - registro.inicio > ventanaMs) {
-      fallos.delete(req.ip);
-      registro = undefined;
-    }
-    if (registro && registro.conteo >= max) {
-      res.set('Retry-After', String(Math.ceil((registro.inicio + ventanaMs - ahora) / 1000)));
-      res.status(429).json({ error: { codigo: 'DEMASIADOS_INTENTOS', mensaje: 'Demasiados intentos fallidos; intente más tarde' } });
+    const correo = typeof req.body?.correo === 'string' ? req.body.correo.trim().toLowerCase() : '';
+    const claveIp = `ip:${req.ip}`;
+    const claveCuenta = `cuenta:${req.ip}|${correo}`;
+
+    const porIp = vigente(claveIp, ahora);
+    if (porIp && porIp.conteo >= maxPorIp) {
+      responder429(res, porIp, ahora, 'Demasiados intentos fallidos desde este equipo; intente más tarde');
       return;
     }
+    const porCuenta = vigente(claveCuenta, ahora);
+    if (porCuenta && porCuenta.conteo >= max) {
+      responder429(res, porCuenta, ahora, 'Demasiados intentos fallidos con esta cuenta; intente más tarde');
+      return;
+    }
+
     res.on('finish', () => {
       if (res.statusCode === 200) {
-        fallos.delete(req.ip);
+        fallos.delete(claveCuenta);
       } else if (res.statusCode === 401 || res.statusCode === 423) {
-        const actual = fallos.get(req.ip) ?? { conteo: 0, inicio: Date.now() };
-        actual.conteo += 1;
-        fallos.set(req.ip, actual);
+        // 423 = cuenta ya bloqueada en la base: cuenta para el equipo, pero no para la cuenta,
+        // así el desbloqueo del Administrador le permite entrar de inmediato.
+        for (const clave of res.statusCode === 401 ? [claveCuenta, claveIp] : [claveIp]) {
+          const actual = fallos.get(clave) ?? { conteo: 0, inicio: Date.now() };
+          actual.conteo += 1;
+          fallos.set(clave, actual);
+        }
       }
     });
     next();
